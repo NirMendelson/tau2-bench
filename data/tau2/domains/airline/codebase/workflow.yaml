@@ -1,0 +1,625 @@
+# Workflow definitions for airline domain
+workflow: BookFlight
+when: "user wants to book a flight reservation or to find available flights"
+
+keywords:
+  - book flight
+  - flight reservation
+  - find flights
+  - available flights
+  - flight booking
+
+examples:
+  - "I want to book a flight"
+  - "Can you help me find available flights?"
+  - "I need to make a flight reservation"
+  - "Show me flights from New York to London"
+
+steps:
+  # Step 1: Get user ID
+  - id: fetch_user_id
+    action: fetch
+    field: user_id
+  
+  # Step 2: Get trip details
+  - id: fetch_trip_details
+    action: fetch
+    fields:
+      - trip_type
+      - origin
+      - destination
+  
+  # Step 3: Get date
+  - id: fetch_date
+    action: fetch
+    field: date
+  
+  # Step 4: Get cabin class
+  - id: fetch_cabin
+    action: fetch
+    field: cabin
+  
+  # Step 5: Get number of passengers
+  - id: fetch_number_of_passengers
+    action: fetch_with_condition
+    field: number_of_passengers
+    condition:
+      operator: less_equal
+      left: "{{ number_of_passengers }}"
+      right: 5
+    then:
+      steps:
+        # Step 6: Ask about flight preference
+        - id: fetch_flight_preference
+          action: fetch_with_condition
+          field: flight_preference
+          condition:
+            operator: eq
+            left: "{{ flight_preference }}"
+            right: ["direct only"]
+          then:
+            steps:
+              # Search direct flights only
+              - id: search_direct_flights
+                action: use_tool
+                tool_name: search_direct_flight
+                origin: "{{ origin }}"
+                destination: "{{ destination }}"
+                date: "{{ date }}"
+                filter:
+                  - field: available_seats.{{ cabin }}
+                    operator: gte
+                    value: "{{ number_of_passengers }}"
+          else:
+            steps:
+              - id: check_one_stop_only
+                action: conditional
+                condition:
+                  operator: contains
+                  left: "{{ flight_preference }}"
+                  right: ["one stop only"]
+                then:
+                  steps:
+                    # Search one-stop flights only
+                    - id: search_onestop_flights
+                      action: use_tool
+                      tool_name: search_onestop_flight
+                      origin: "{{ origin }}"
+                      destination: "{{ destination }}"
+                      date: "{{ date }}"
+                      filter:
+                        - field: available_seats.{{ cabin }}
+                          operator: gte
+                          value: "{{ number_of_passengers }}"
+                else:
+                  # Search both direct and one-stop flights
+                  steps:
+                    - id: search_direct_flights
+                      action: use_tool
+                      tool_name: search_direct_flight
+                      origin: "{{ origin }}"
+                      destination: "{{ destination }}"
+                      date: "{{ date }}"
+                      filter:
+                        - field: available_seats.{{ cabin }}
+                          operator: gte
+                          value: "{{ number_of_passengers }}"
+                    - id: search_onestop_flights
+                      action: use_tool
+                      tool_name: search_onestop_flight
+                      origin: "{{ origin }}"
+                      destination: "{{ destination }}"
+                      date: "{{ date }}"
+                      filter:
+                        - field: available_seats.{{ cabin }}
+                          operator: gte
+                          value: "{{ number_of_passengers }}"
+        
+        # Step 8: Display flight results
+        - id: display_flight_results
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ flight_preference }}"
+            right: ["direct only"]
+          then:
+            id: display_flight_results_direct
+            action: fetch_with_message
+            field: selected_flights
+            message: |
+              Here are the available direct flights for your trip:
+              
+              {{ search_direct_flight_result }}
+              
+              Please select which flight you'd like to book by providing the flight ID.
+          else:
+            steps:
+              - id: check_display_one_stop
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ flight_preference }}"
+                  right: ["one stop only"]
+                then:
+                  id: check_display_one_stop_true
+                  action: fetch_with_message
+                  field: selected_flights
+                  message: |
+                    Here are the available one-stop flights for your trip:
+                    
+                    {{ search_onestop_flight_result }}
+                    
+                    Please select which flight you'd like to book by providing the flight ID.
+                else:
+                  id: check_display_one_stop_false
+                  action: fetch_with_message
+                  field: selected_flights
+                  message: |
+                    Here are the available flights for your trip:
+                    
+                    Direct flights:
+                    {{ search_direct_flight_result }}
+                    
+                    One-stop flights:
+                    {{ search_onestop_flight_result }}
+                    
+                    Please select which flight you'd like to book by providing the flight ID.
+        
+        # Step 10: Collect passenger information
+        - id: ask_travel_insurance
+          action: fetch
+          field: travel_insurance
+        
+        - id: collect_all_passengers_details
+          action: fetch_with_condition
+          fields: passengers_details (first_name, last_name, date_of_birth)
+          condition:
+            operator: eq
+            left: "{{ passengers_details }}"
+            right: "complete information for all {{ number_of_passengers }} travelers, each with first_name, last_name, and date_of_birth"
+
+        - id: collect_payment_methods
+          action: use_tool
+          tool_name: get_user_details
+          user_id: "{{ user_id }}"
+          filter:
+            - field: count_travel_certificates
+              operator: less_equal
+              value: 1
+            - field: count_credit_cards
+              operator: less_equal
+              value: 1
+            - field: count_gift_cards
+              operator: less_equal
+              value: 3
+        
+
+        - id: get_explicit_confirmation
+          action: fetch
+          field: explicit_confirmation
+          condition:
+            operator: eq
+            left: "{{ explicit_confirmation }}"
+            right: "yes"
+          then:
+            steps:
+              - id: book_reservation
+                action: use_tool
+                tool_name: book_reservation
+                input: ["{{ user_id }}", "{{ origin }}", "{{ destination }}", "{{ flight_type }}", "{{ cabin }}", "{{ flights }}", "{{ passengers_details }}", "{{ payment_methods }}", "{{ total_baggages }}", "{{ nonfree_baggages }}", "{{ travel_insurance }}"]
+                set_variables:
+                  - reservation_id
+              
+              - id: display_reservation_confirmation
+                action: fetch_with_message
+                field: reservation_id
+                message: |
+                  Your reservation has been confirmed. Your reservation ID is {{ reservation_id }}.
+    else:
+      steps:
+        - id: inform_max_passengers
+          action: reply
+          message: "sorry Each reservation can have at most five passengers."
+
+
+---
+subworkflow: GivingCheckedBagInformation
+when: "user asks about checked bag allowance or baggage information"
+
+steps:
+  # Step 1: Get user ID (if not already available)
+  - id: fetch_user_id
+    action: fetch
+    field: user_id
+  
+  # Step 2: Get cabin class
+  - id: fetch_cabin
+    action: fetch
+    field: cabin
+  
+  # Step 3: Get user details to retrieve membership status
+  - id: get_user_details
+    action: use_tool
+    tool_name: get_user_details
+    user_id: "{{ user_id }}"
+  
+  # Step 4: Fetch membership status (extracted from user details or fetched directly)
+  - id: fetch_membership
+    action: fetch
+    field: membership
+  
+  # Step 5: Calculate free checked bags based on membership and cabin
+  - id: calculate_free_bags
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ membership }}"
+      right: "regular"
+    then:
+      steps:
+        - id: check_regular_cabin
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ cabin }}"
+            right: "basic_economy"
+          then:
+            steps:
+              - id: set_free_bags
+                action: set_variable
+                variable: free_checked_bags_per_passenger
+                value: 0
+          else:
+            steps:
+              - id: check_regular_economy
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ cabin }}"
+                  right: "economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 1
+                else:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 2
+    else:
+      steps:
+        - id: check_silver
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ membership }}"
+            right: "silver"
+          then:
+            steps:
+              - id: check_silver_cabin
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ cabin }}"
+                  right: "basic_economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 1
+                else:
+                  steps:
+                    - id: check_silver_economy
+                      action: conditional
+                      condition:
+                        operator: eq
+                        left: "{{ cabin }}"
+                        right: "economy"
+                      then:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 2
+                      else:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+          else:
+            # Must be gold member
+            steps:
+              - id: check_gold_cabin
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ cabin }}"
+                  right: "basic_economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 2
+                else:
+                  steps:
+                    - id: check_gold_economy
+                      action: conditional
+                      condition:
+                        operator: eq
+                        left: "{{ cabin }}"
+                        right: "economy"
+                      then:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+                      else:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+  
+  
+
+---
+workflow: ModifyBaggage
+when: "user wants to modify or change checked baggage for their reservation"
+
+keywords:
+  - modify baggage
+  - change baggage
+  - add baggage
+  - remove baggage
+  - update bags
+  - checked bags
+  - baggage modification
+
+examples:
+  - "I want to add checked bags"
+  - "Can I remove a checked bag?"
+  - "I need to modify my baggage"
+  - "I want to change my checked bags"
+
+steps:
+  # Step 1: Get user ID and determine action (add or remove)
+  - id: fetch_user_id_and_baggage_action
+    action: fetch
+    fields:
+      - user_id
+      - baggage_action
+  
+  # Step 2: Check if user wants to remove (not allowed)
+  - id: check_remove_action
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ baggage_action }}"
+      right: "remove"
+    then:
+      steps:
+        - id: inform_remove_not_possible
+          action: reply
+          message: "I'm sorry, but it's not possible to remove checked bags from an existing reservation. You can only add additional checked bags."
+    else:
+      steps:
+        # Step 3: Fetch reservation ID
+        - id: fetch_reservation_id
+          action: fetch
+          field: reservation_id
+        
+        # Step 4: Get reservation details (uses reservation_id)
+        - id: get_reservation_details
+          action: use_tool
+          tool_name: get_reservation_details
+          input: "{{ reservation_id }}"
+          set_variables:
+            - total_baggages
+            - nonfree_baggages
+            - cabin
+            - passengers
+        
+        # Step 5: Get user details to retrieve membership status (uses user_id)
+        - id: get_user_details
+          action: use_tool
+          tool_name: get_user_details
+          input: "{{ user_id }}"
+          set_variables:
+            - membership
+
+        # Step 6: Calculate free checked bags based on membership and cabin (uses user_id, cabin, membership)
+        - id: calculate_free_bags
+          action: use_subworkflow
+          subworkflow: GivingCheckedBagInformation
+        
+        # Step 9: Fetch number of passengers
+        - id: fetch_number_of_passengers
+          action: fetch
+          field: number_of_passengers
+        
+        # Step 10: Calculate total free bags for all passengers
+        - id: calculate_total_free_bags
+          action: use_tool
+          tool_name: calculate
+          expression: "{{ free_checked_bags_per_passenger }} * {{ number_of_passengers }}"
+        
+        # Step 11: Fetch desired total baggages
+        - id: fetch_desired_total_baggages
+          action: fetch
+          field: desired_total_baggages
+        
+        # Step 12: Calculate total baggages minus free bags
+        - id: calculate_baggages_minus_free
+          action: use_tool
+          tool_name: calculate
+          expression: "{{ desired_total_baggages }} - {{ calculate_total_free_bags_result }}"
+        
+        # Step 13: Determine new nonfree baggages (max of 0 or calculated value)
+        - id: determine_new_nonfree_baggages
+          action: conditional
+          condition:
+            operator: gte
+            left: "{{ calculate_baggages_minus_free_result }}"
+            right: 0
+          then:
+            steps:
+              - id: set_new_nonfree_baggages
+                action: set_variable
+                variable: new_nonfree_baggages
+                value: "{{ calculate_baggages_minus_free_result }}"
+          else:
+            steps:
+              - id: set_new_nonfree_baggages_zero
+                action: set_variable
+                variable: new_nonfree_baggages
+                value: 0
+        
+        # Step 14: Calculate price difference
+        - id: calculate_price_difference
+          action: use_tool
+          tool_name: calculate
+          expression: "50 * ({{ new_nonfree_baggages }} - {{ nonfree_baggages }})"
+        
+        # Step 15: Fetch payment_id from user
+        - id: fetch_payment_id
+          action: use_tool
+          tool_name: get_user_details
+          input: "{{ user_id }}"
+          set_variables:
+            - payment_id
+        
+        # Step 16: Update reservation baggages
+        - id: update_reservation_baggages
+          action: use_tool
+          tool_name: update_reservation_baggages
+          reservation_id: "{{ reservation_id }}"
+          total_baggages: "{{ desired_total_baggages }}"
+          nonfree_baggages: "{{ new_nonfree_baggages }}"
+          payment_id: "{{ payment_id }}"
+
+---
+workflow: ChangeCabin
+when: "user wants to change the cabin class of their flight reservation"
+
+keywords:
+  - change cabin
+  - upgrade cabin
+  - downgrade cabin
+  - change seat class
+  - modify cabin
+  - cabin change
+
+examples:
+  - "I want to change my cabin class"
+  - "Can I upgrade to business class?"
+  - "I need to change my seat class"
+  - "Change my cabin to first class"
+
+steps:
+  # Step 1: Get user ID and reservation ID
+  - id: fetch_user_and_reservation
+    action: fetch
+    fields:
+      - user_id
+      - reservation_id
+  
+  # Step 2: Get reservation details to get current cabin and flight info
+  - id: get_reservation_details
+    action: use_tool
+    tool_name: get_reservation_details
+    user_id: "{{ user_id }}"
+    reservation_id: "{{ reservation_id }}"
+  
+  # Step 3: Set variables from reservation details
+  - id: set_current_cabin
+    action: set_variable
+    variable: current_cabin
+    value: "{{ cabin }}"
+  
+  - id: set_current_flights
+    action: set_variable
+    variable: current_flights
+    value: "{{ flights }}"
+  
+  - id: set_current_price
+    action: set_variable
+    variable: current_price
+    value: "{{ amount }}"
+  
+  # Step 4: Determine flight type based on number of flights
+  - id: determine_flight_type
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ flight_type }}"
+      right: "one_way"
+    then:
+      steps:
+        - id: set_flight_type_direct
+          action: set_variable
+          variable: flight_type
+          value: "direct"
+    else:
+      steps:
+        - id: set_flight_type_onestop
+          action: set_variable
+          variable: flight_type
+          value: "one_stop"
+  
+  # Step 5: Fetch requested cabin from user
+  - id: fetch_requested_cabin
+    action: fetch
+    field: requested_cabin
+  
+  # Step 6: Check flight type and search for new price
+  - id: check_flight_type_and_search
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ flight_type }}"
+      right: "direct"
+    then:
+      steps:
+        - id: search_new_cabin_price_direct
+          action: use_tool
+          tool_name: search_direct_flight
+          input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+          set_variables:
+            - search_direct_flight_result
+
+    else:
+      steps:
+        - id: search_new_cabin_price_onestop
+          action: use_tool
+          tool_name: search_onestop_flight
+          input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+          set_variables:
+            - search_onestop_flight_result
+  
+  # Step 7: Calculate price difference
+  - id: calculate_price_difference
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ flight_type }}"
+      right: "direct"
+    then:
+      steps:
+        - id: calculate_direct_price_diff
+          action: use_tool
+          tool_name: calculate
+          expression: "{{ search_direct_flight_result.price }} - {{ current_price }}"
+    else:
+      steps:
+        - id: calculate_onestop_price_diff
+          action: use_tool
+          tool_name: calculate
+          expression: "{{ search_onestop_flight_result.price }} - {{ current_price }}"
+  
