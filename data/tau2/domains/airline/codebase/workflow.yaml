@@ -1104,7 +1104,7 @@ steps:
 
 ---
 ---
-workflow: FindReservationId
+subworkflow: FindReservationId
 when: "user doesn't know their reservation ID or asks to find their reservation"
 
 keywords:
@@ -1137,7 +1137,13 @@ steps:
     tool_name: get_user_details
     input: ["{{ user_id }}"]
     set_variables:
-      - reservations_list
+      - reservations
+  
+  # Step 2b: Map reservations to reservations_list for consistency
+  - id: set_reservations_list
+    action: set_variable
+    variable: reservations_list
+    value: "{{ reservations }}"
   
   # Step 3: Check number of reservations
   - id: check_reservation_count
@@ -1161,7 +1167,13 @@ steps:
             right: 1
           then:
             steps:
+              
               # User has only one reservation - return it directly
+              - id: set_single_reservation_id
+                action: set_variable
+                variable: reservation_id
+                value: "{{ reservations_list[0] }}"
+
               - id: return_single_reservation_id
                 action: reply
                 message: "I found one reservation in your account. Your reservation ID is {{ reservations_list[0] }}."
@@ -1178,45 +1190,56 @@ steps:
                   - The origin airport code (e.g., SFO, JFK, LAX)
                   - The destination airport code (e.g., SFO, JFK, LAX)
               
-              # Step 4: Use instruction action to find matching reservation
+              # Step 4: Fetch details for all reservations loop
+              - id: fetch_all_reservation_details
+                action: loop
+                loop_over: reservations_list
+                loop_variable: reservation_id
+                set_variable: all_reservation_details
+                subaction:
+                  action: use_tool
+                  tool_name: get_reservation_details
+                  input: ["{{ reservation_id }}"]
+                  set_variables:
+                    - reservation_id
+                    - origin
+                    - destination
+
+              # Step 5: Find matching reservation from memory
               - id: find_matching_reservation
                 action: instruction
                 instruction: |
-                  Check all reservation IDs in the reservations_list and find the one that has 
-                  origin: {{ origin }} and destination: {{ destination }}.
+                  I have fetched the details for each reservation in the reservations_list.
                   
-                  Steps to follow:
-                  1. For each reservation_id in reservations_list, call get_reservation_details with that reservation_id
-                  2. Check if the reservation's origin field matches {{ origin }} and destination field matches {{ destination }}
-                  3. Once you find the matching reservation, set the variable 'matching_reservation_id' to that reservation_id
-                  4. If no matching reservation is found after checking all reservations, set matching_reservation_id to null
+                  all_reservation_details: {{ all_reservation_details }}
                   
-                  Available tools:
-                  - get_reservation_details(reservation_id: str) -> Reservation
+                  Find the reservation ID from all_reservation_details where:
+                  - The origin matches {{ origin }}
+                  - The destination matches {{ destination }}
                   
-                  The Reservation object has 'origin' and 'destination' fields that you need to compare.
-                tools_available:
-                  - get_reservation_details
+                  Return the reservation ID. If no match is found, return null.
                 set_variable: matching_reservation_id
               
               # Step 5: Check if a match was found
               - id: check_match_found
                 action: conditional
                 condition:
-                  operator: ne
+                  operator: eq
                   left: "{{ matching_reservation_id }}"
                   right: null
                 then:
                   steps:
-                    - id: return_matching_reservation_id
-                      action: reply
-                      message: "I found your reservation! Your reservation ID is {{ matching_reservation_id }}."
-                else:
-                  steps:
                     - id: inform_no_match_found
                       action: reply
                       message: "I couldn't find a reservation matching {{ origin }} to {{ destination }}. Please verify the airport codes and try again, or contact customer service for assistance."
-          
+                else:
+                  steps:
+                    - id: set_matched_reservation_id
+                      action: set_variable
+                      variable: reservation_id
+                      value: "{{ matching_reservation_id }}"
+
+
 ---
 workflow: CancelFlight
 when: "user wants to cancel their flight reservation"
@@ -1236,11 +1259,23 @@ examples:
 
 steps:
   # Step 1: Get user ID and reservation ID
-  - id: fetch_user_and_reservation
+  # Step 1: Get user ID and reservation ID
+  - id: fetch_user_id
     action: fetch
-    fields:
-      - user_id
-      - reservation_id
+    field: user_id
+  
+  - id: fetch_reservation_id
+    action: fetch_with_condition
+    field: reservation_id
+    condition:
+      operator: equal
+      left: "{{ reservation_id }}"
+      right: "NOT PROVIDED"
+    then:
+      steps:
+        - id: find_reservation_subworkflow
+          action: use_subworkflow
+          subworkflow: FindReservationId
   
   # Step 2: Get cancellation reason
   - id: fetch_cancellation_reason
@@ -1260,69 +1295,34 @@ steps:
     tool_name: get_reservation_details
     input: ["{{ reservation_id }}"]
     set_variables:
-      - reservation_flights
-      - reservation_created_at
-      - reservation_cabin
-      - reservation_insurance
+      - flights
+      - created_at
+      - cabin
+      - insurance
   
-  # Step 4: Extract flight numbers and dates from reservation
-  - id: extract_flight_info
-    action: instruction
-    instruction: |
-      Extract the flight numbers and dates from the reservation_flights.
-      The reservation_flights is a list of ReservationFlight objects, each containing:
-      - flight_number: The flight number (e.g., "HAT001")
-      - date: The flight date in YYYY-MM-DD format
-      - origin: The origin airport code
-      - destination: The destination airport code
-      
-      Set the following variables:
-      - flight_numbers: A list of all flight numbers from the reservation
-      - flight_dates: A list of all flight dates from the reservation
-      - flight_origins: A list of all origin airport codes
-      - flight_destinations: A list of all destination airport codes
-    set_variables:
-      - flight_numbers
-      - flight_dates
-      - flight_origins
-      - flight_destinations
+  # Step 4: Loop over flights to collect statuses
+  - id: collect_flight_statuses
+    action: loop
+    loop_over: "{{ flights }}"
+    loop_variable: flight
+    set_variable: flight_status_list
+    subaction:
+      action: use_tool
+      tool_name: get_flight_status
+      input: ["{{ flight.flight_number }}", "{{ flight.date }}"]
   
-  # Step 5: Check flight status for each flight and ensure none are landed
-  - id: check_flight_statuses
-    action: instruction
-    instruction: |
-      For each flight in the reservation, check its status using get_flight_status tool.
-      
-      Steps:
-      1. Iterate through flight_numbers and flight_dates (they should have the same length)
-      2. For each pair (flight_number, date), call get_flight_status(flight_number, date)
-      3. Collect all flight statuses in a list called flight_statuses
-      4. Check if any flight status is "landed"
-      5. If any flight has status "landed", set can_check_cancellation to false and set a message explaining that flights that have already landed cannot be cancelled
-      6. If no flights are landed, set can_check_cancellation to true
-      
-      Available tools:
-      - get_flight_status(flight_number: str, date: str) -> str
-      
-      The status can be: "available", "on time", "flying", "landed", "cancelled", or "delayed"
-    tools_available:
-      - get_flight_status
-    set_variables:
-      - flight_statuses
-      - can_check_cancellation
-  
-  # Step 6: Check if flights are landed - if so, cannot cancel
-  - id: check_if_flights_landed
+  # Step 5: Check if any flight is cancelled or landed
+  - id: check_invalid_status
     action: conditional
     condition:
-      operator: eq
-      left: "{{ can_check_cancellation }}"
-      right: false
+      operator: contains
+      left: "{{ flight_status_list }}"
+      right: "cancelled OR landed"
     then:
       steps:
-        - id: inform_flights_landed
+        - id: inform_invalid_flight_status
           action: reply
-          message: "I'm sorry, but flights that have already landed cannot be cancelled."
+          message: "I'm sorry, but flights that are cancelled or have already landed cannot be cancelled."
     else:
       steps:
         # Step 7: Check cancellation eligibility conditions
@@ -1332,7 +1332,7 @@ steps:
             Check if the reservation was created within the last 24 hours.
             
             Steps:
-            1. Get the reservation_created_at timestamp (format: YYYY-MM-DDTHH:MM:SS)
+            1. Get the created_at timestamp (format: YYYY-MM-DDTHH:MM:SS)
             2. Get today_date from memory (format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
             3. Calculate the time difference between today_date and reservation_created_at
             4. If the difference is less than 24 hours, set booking_within_24hr to true, else false
@@ -1345,7 +1345,7 @@ steps:
         - id: check_flight_cancelled
           action: instruction
           instruction: |
-            Check if any flight in flight_statuses has status "cancelled".
+            Check if any flight in flight_status_list has status "cancelled".
             If at least one flight has status "cancelled", set flight_is_cancelled to true, else false.
           set_variable: flight_is_cancelled
         
@@ -1354,7 +1354,7 @@ steps:
           action: conditional
           condition:
             operator: eq
-            left: "{{ reservation_cabin }}"
+            left: "{{ cabin }}"
             right: "business"
           then:
             steps:
@@ -1374,7 +1374,7 @@ steps:
           action: conditional
           condition:
             operator: eq
-            left: "{{ reservation_insurance }}"
+            left: "{{ insurance }}"
             right: "yes"
           then:
             steps:
@@ -1482,6 +1482,7 @@ examples:
   - "I want to complain about my flight"
 
 steps:
+
   # Step 1: Get user ID and reservation ID
   - id: fetch_user_and_reservation
     action: fetch
@@ -1747,8 +1748,8 @@ steps:
                       else:
                         steps:
                           - id: inform_no_change_cancel
-                          action: reply
-                          message: "Since you don't want to change or cancel your reservation, I cannot process a refund for delayed flights. If you change your mind, please let me know."
+                            action: reply
+                            message: "Since you don't want to change or cancel your reservation, I cannot process a refund for delayed flights. If you change your mind, please let me know."
                 else:
                   steps:
                     - id: inform_other_complaint

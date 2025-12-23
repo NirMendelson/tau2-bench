@@ -15,8 +15,6 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
     """
     # 1. Update history
     memory.add_to_history("user", user_message)
-    if DEBUG_MODE:
-        logger.info(f"DEBUG ORCHESTRATOR: User Message: {user_message}")
 
     # 2. Check for workflow match
     # We always check for a better match or if we are idle
@@ -43,8 +41,6 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
     current_root = memory.workflow_name
     
     if matched_workflow:
-        if DEBUG_MODE:
-             logger.info(f"DEBUG ORCHESTRATOR: Matched Workflow: {matched_workflow['workflow']}")
         new_wf_name = matched_workflow['workflow']
         if new_wf_name != current_root:
             # Switch workflow!
@@ -72,9 +68,6 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
         frame = memory.stack[-1]
         steps = frame['steps']
         index = frame['index']
-        
-        if DEBUG_MODE:
-             logger.info(f"DEBUG ORCHESTRATOR: Workflow: {frame['name']}, Step Index: {index}")
         
         # Check if done with this frame
         if index >= len(steps):

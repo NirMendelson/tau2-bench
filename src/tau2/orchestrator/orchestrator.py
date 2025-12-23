@@ -455,12 +455,9 @@ class Orchestrator:
         """
         if self.done:
             raise ValueError("Simulation is done")
-        logger.debug(
-            f"Step {self.step_count}. Sending message from {self.from_role} to {self.to_role}"
-        )
-        logger.debug(
-            f"Step {self.step_count}.\nFrom role: {self.from_role}\nTo role: {self.to_role}\nMessage: {self.message}"
-        )
+        # Simple output: just role and content
+        content = self.message.content if hasattr(self.message, 'content') and self.message.content else str(self.message)
+        print(f"{self.from_role.value.upper()}: {content}")
         # AGENT/ENV -> USER
         if self.from_role in [Role.AGENT, Role.ENV] and self.to_role == Role.USER:
             user_msg, self.user_state = self.user.generate_next_message(

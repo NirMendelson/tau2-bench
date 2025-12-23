@@ -1,7 +1,17 @@
 import os
+import sys
 import yaml
 from loguru import logger
 from typing import Optional, Any
+
+# Configure logger to show only messages (no timestamps, levels, file names, or function names)
+def simple_sink(message):
+    """Custom sink that prints only the message content"""
+    sys.stderr.write(message.record["message"] + "\n")
+    sys.stderr.flush()
+
+logger.remove()
+logger.add(simple_sink)
 
 from tau2.agent.base import LocalAgent, AgentState
 from tau2.data_model.message import (
@@ -16,6 +26,7 @@ from tau2.environment.tool import Tool
 
 from .memory.manager import MemoryManager
 from .processor import orchestrator
+from .tools import ToolExecutor
 
 # Load configuration files
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,14 +53,15 @@ class WorkflowAgent(LLMAgent):
         # Load external resources
         self.workflows = self._load_workflows()
         self.tone_text = self._load_tone()
+        self.constants = self._load_constants()
         
         # Initialize internal toolset
         self.tool_executor = self._build_tool_executor(tools)
 
     def _load_workflows(self):
         with open(WORKFLOW_FILE, 'r') as f:
-            # Load all documents
-            return list(yaml.safe_load_all(f))
+            # Load all documents and filter out None values (empty documents)
+            return [w for w in yaml.safe_load_all(f) if w is not None]
 
     def _load_tone(self):
         with open(TONE_FILE, 'r') as f:
@@ -68,20 +80,27 @@ class WorkflowAgent(LLMAgent):
                     lines.append(f"- {g}")
             return "\n".join(lines)
 
+    def _load_constants(self):
+        """
+        Loads constants from constants.yaml file and returns as a dictionary.
+        Returns empty dict if file doesn't exist or is empty.
+        """
+        try:
+            with open(CONSTANTS_FILE, 'r') as f:
+                data = yaml.safe_load(f)
+                return data if data is not None else {}
+        except FileNotFoundError:
+            logger.warning(f"constants file not found: {CONSTANTS_FILE}")
+            return {}
+        except Exception as e:
+            logger.error(f"error loading constants file: {e}")
+            return {}
+
     def _build_tool_executor(self, tools_list):
         """
-        Creates a dummy object that maps method names to the callable functions inside Tool objects.
+        Creates a ToolExecutor that handles workflow syntax to tool calls.
         """
-        class ToolBridge:
-            pass
-            
-        bridge = ToolBridge()
-        for tool in tools_list:
-            # tool is a Tool object. tool.func is the callable. tool.name is the name.
-            # We map tool.name to tool.func
-            setattr(bridge, tool.name, tool)
-            
-        return bridge
+        return ToolExecutor(tools_list)
 
     class WorkflowAgentState(LLMAgentState):
         memory: Any
@@ -98,6 +117,11 @@ class WorkflowAgent(LLMAgent):
         
         # Initialize MemoryManager
         memory = MemoryManager()
+        
+        # Load constants into memory variables
+        if self.constants:
+            memory.set_variables(self.constants)
+        
         if message_history:
             for msg in message_history:
                 if isinstance(msg, UserMessage):

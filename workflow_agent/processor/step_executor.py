@@ -31,36 +31,39 @@ def clean_json_response(response_text):
 
 def execute_fetch(step, memory, conversation, tone_text, llm_model):
     """
-    Checks if field exists in conversation. If yes, sets variable. If no, asks user.
+    Checks if field(s) exist in conversation. If yes, sets variable(s). If no, asks user.
+    Handles both single field and multiple fields.
     """
     field = step.get('field')
     fields = step.get('fields')
     
-    # Handle single or multiple fields
+    # Normalize to list - handle both single field and multiple fields
     target_fields = fields if fields else [field]
     
-    # Check if we already have them in memory? 
-    # The requirement says "check if the field exists in the conversation".
-    # But usually we check memory first to avoid re-extraction.
-    # However, for "fetch", we might want to ensure it's in the CURRENT conversation context 
-    # or just use memory. Let's assume memory is the source of truth.
-    
+    # Check which fields are missing from memory
     missing_fields = [f for f in target_fields if not memory.get_variable(f)]
     
+    # If all fields are found, we're done
     if not missing_fields:
         return StepExecutionResult("completed")
     
-    # We need to fetch the first missing field (or all?)
-    # The prompt handles one field at a time usually, or we can adapt it.
-    # Let's handle one by one for simplicity as per the prompt structure.
-    target_field = missing_fields[0]
-    
-    # Get prompt
+    # Get conversation text
     conv_text = memory.get_history_as_text()
-    prompt = prompts.get_fetch_prompt(target_field, conv_text, tone_text)
+    
+    # Determine if single or multiple fields and call appropriate prompt
+    is_single_field = len(target_fields) == 1
+    
+    if is_single_field:
+        # Single field - use single field prompt
+        prompt = prompts.get_fetch_single_prompt(target_fields[0], conv_text, tone_text)
+    else:
+        # Multiple fields - use multi-field prompt to check all at once
+        prompt = prompts.get_fetch_multi_prompt(target_fields, conv_text, tone_text)
     
     if DEBUG_MODE:
-        logger.info(f"DEBUG PROMPT (fetch): {prompt}")
+        print("--- Get Workflow Prompt ---")
+        print(prompt)
+        print("--------------------------------")
 
     response = litellm.completion(
         model=llm_model,
@@ -68,22 +71,65 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
     )
     
     content = clean_json_response(response.choices[0].message.content)
+
+    if DEBUG_MODE:
+        print("---agent yaml output---")
+        print(content)
     
     try:
         # Parse YAML/JSON result
         import yaml
         result = yaml.safe_load(content)
         
-        if result.get('found'):
-            memory.set_variable(target_field, result.get('value'))
-            # Recursively check if we have more missing fields
-            return execute_fetch(step, memory, conversation, tone_text, llm_model)
+        # Handle response format - check if it's multi-field format or single field format
+        if 'fields' in result:
+            # Multi-field response format
+            fields_data = result.get('fields', {})
+            questions_data = result.get('questions', {})
+            
+            # Store found fields in memory
+            for field_name in target_fields:
+                if field_name in fields_data and fields_data[field_name] is not None:
+                    memory.set_variable(field_name, fields_data[field_name])
+            
+            # Check if we now have all fields
+            still_missing = [f for f in target_fields if not memory.get_variable(f)]
+            
+            if not still_missing:
+                # All fields found - we're done
+                return StepExecutionResult("completed")
+            else:
+                # Some or all fields still missing - ask user
+                # Prefer combined question if available
+                combined_question = result.get('combined_question')
+                if combined_question:
+                    return StepExecutionResult("blocking", message=combined_question)
+                else:
+                    # Combine individual questions for missing fields
+                    questions = [q for f, q in questions_data.items() if f in still_missing and q]
+                    if questions:
+                        if len(questions) == 1:
+                            return StepExecutionResult("blocking", message=questions[0])
+                        else:
+                            # Combine multiple questions naturally
+                            combined = " ".join(questions)
+                            return StepExecutionResult("blocking", message=combined)
+                    else:
+                        # Fallback if no questions provided
+                        missing_list = ", ".join(still_missing)
+                        return StepExecutionResult("blocking", message=f"Please provide: {missing_list}")
         else:
-            return StepExecutionResult("blocking", message=result.get('question'))
+            # Single field response format (backward compatible)
+            if result.get('found'):
+                memory.set_variable(target_fields[0], result.get('value'))
+                # Recursively check if we have more missing fields (for backward compatibility)
+                return execute_fetch(step, memory, conversation, tone_text, llm_model)
+            else:
+                return StepExecutionResult("blocking", message=result.get('question'))
             
     except Exception as e:
         # Fallback if parsing fails
-        print(f"Error parsing fetch response: {e}")
+        logger.error(f"error parsing fetch response: {e}")
         return StepExecutionResult("failed", message="Failed to extract information.")
 
 def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_model):
@@ -92,16 +138,18 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
     """
     field = step.get('field')
     condition = step.get('condition')
-    condition_str = json.dumps(condition) # Pass the structural condition for context
+    # Pass the condition object directly to the prompt generator
     
     # Check memory first
     val = memory.get_variable(field)
     
     conv_text = memory.get_history_as_text()
-    prompt = prompts.get_fetch_with_condition_prompt(field, condition_str, conv_text, tone_text)
+    prompt = prompts.get_fetch_with_condition_prompt(field, condition, conv_text, tone_text)
     
     if DEBUG_MODE:
-        logger.info(f"DEBUG PROMPT (fetch_with_condition): {prompt}")
+        print("--- Get Workflow Prompt ---")
+        print(prompt)
+        print("--------------------------------")
 
     response = litellm.completion(
         model=llm_model,
@@ -109,40 +157,34 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
     )
     
     content = clean_json_response(response.choices[0].message.content)
+
+    if DEBUG_MODE:
+        print("---agent yaml output---")
+        print(content)
     
     try:
         import yaml
         result = yaml.safe_load(content)
         
+        # Use the LLM's evaluation of the condition
+        condition_met = result.get('condition_result')
+        
+        # If explicit 'true'/'false' string, convert to boolean
+        if isinstance(condition_met, str):
+            condition_met = condition_met.lower() == 'true'
+
         if result.get('found'):
             memory.set_variable(field, result.get('value'))
-            
-            # Use the LLM's evaluation of the condition
-            condition_met = result.get('condition_result')
-            
-            # If explicit 'true'/'false' string, convert to boolean
-            if isinstance(condition_met, str):
-                condition_met = condition_met.lower() == 'true'
-            
-            if condition_met:
-                # Condition met -> execute 'then' steps
-                # The orchestrator handles nested steps. We just return 'completed'
-                # But wait, looking at the YAML, 'fetch_with_condition' acts as a branch node
-                # It has 'then' and 'else'.
-                
-                # If we return 'completed', we need to tell the orchestrator WHICH path to take?
-                # Actually, the orchestrator should handle the 'then'/'else' logic based on the result.
-                # But step_executor usually handles single steps.
-                # Let's modify StepExecutionResult to support branching direction or let orchestrator handle it.
-                
-                # If we are here, we found the value AND condition is true.
-                # The orchestrator should look at 'then'
-                return StepExecutionResult("completed", result={"condition": True})
-            else:
-                # Found value but condition false
-                return StepExecutionResult("completed", result={"condition": False})
+        
+        if condition_met:
+            # Condition met -> execute 'then' steps
+            return StepExecutionResult("completed", result={"condition": True})
+        
+        if result.get('found'):
+            # Found value but condition false
+            return StepExecutionResult("completed", result={"condition": False})
         else:
-            # Not found -> ask question
+            # Not found and condition false -> ask question
             return StepExecutionResult("blocking", message=result.get('question'))
             
     except Exception as e:
@@ -151,35 +193,93 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
 
 def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model):
     """
-    Sends a specific question and fetches the answer to a variable.
-    But in a turn-based execution, we first need to SEND the message if we haven't yet.
+    Checks if field(s) exist in conversation. If yes, sets variable(s). If no, asks user with the provided message.
+    Handles both single field and multiple fields.
     """
     field = step.get('field')
-    message_template = step.get('message')
+    fields = step.get('fields')
     
-    # Check if we already have the variable
-    if memory.get_variable(field):
+    # Normalize to list - handle both single field and multiple fields
+    target_fields = fields if fields else [field]
+    
+    # Check which fields are missing from memory
+    missing_fields = [f for f in target_fields if not memory.get_variable(f)]
+    
+    # If all fields are found, we're done
+    if not missing_fields:
         return StepExecutionResult("completed")
     
     # Resolve templates in message
+    message_template = step.get('message')
     resolved_message = memory.resolve_templates(message_template)
     
-    # Generate message with tone
+    # Get conversation text
     conv_text = memory.get_history_as_text()
-    prompt = prompts.get_fetch_with_message_prompt(resolved_message, conv_text, tone_text)
+    
+    # Call prompt with field names
+    prompt = prompts.get_fetch_with_message_prompt(target_fields, resolved_message, conv_text, tone_text)
     
     if DEBUG_MODE:
-        logger.info(f"DEBUG PROMPT (fetch_with_message): {prompt}")
-
+        print("--- Get Workflow Prompt ---")
+        print(prompt)
+        print("--------------------------------")
+    
     response = litellm.completion(
         model=llm_model,
         messages=[{"role": "user", "content": prompt}]
     )
     
-    final_message = response.choices[0].message.content.strip()
+    content = clean_json_response(response.choices[0].message.content)
+
+    if DEBUG_MODE:
+        print("---agent yaml output---")
+        print(content)
     
-    # This is blocking because we need to wait for the user's answer
-    return StepExecutionResult("blocking", message=final_message)
+    try:
+        # Parse YAML/JSON result
+        import yaml
+        result = yaml.safe_load(content)
+        
+        # Handle response format
+        if 'fields' in result:
+            # Multi-field response format
+            fields_data = result.get('fields', {})
+            questions_data = result.get('questions', {})
+            
+            # Store found fields in memory
+            for field_name in target_fields:
+                if field_name in fields_data and fields_data[field_name] is not None:
+                    memory.set_variable(field_name, fields_data[field_name])
+            
+            # Check if we now have all fields
+            still_missing = [f for f in target_fields if not memory.get_variable(f)]
+            
+            if not still_missing:
+                # All fields found - we're done
+                return StepExecutionResult("completed")
+            else:
+                # Some or all fields still missing - use the question from YAML
+                # Get question for the first missing field (or combine if multiple)
+                questions = [q for f, q in questions_data.items() if f in still_missing and q]
+                if questions:
+                    if len(questions) == 1:
+                        return StepExecutionResult("blocking", message=questions[0])
+                    else:
+                        # Combine multiple questions naturally
+                        combined = " ".join(questions)
+                        return StepExecutionResult("blocking", message=combined)
+                else:
+                    # Fallback to the provided message if no questions in response
+                    return StepExecutionResult("blocking", message=resolved_message)
+        else:
+            # Fallback if response format is unexpected
+            logger.warning(f"unexpected response format from fetch_with_message: {result}")
+            return StepExecutionResult("blocking", message=resolved_message)
+            
+    except Exception as e:
+        # Fallback if parsing fails
+        logger.error(f"error parsing fetch_with_message response: {e}")
+        return StepExecutionResult("blocking", message=resolved_message)
 
 def execute_reply(step, memory, conversation, tone_text, llm_model):
     """
@@ -192,7 +292,9 @@ def execute_reply(step, memory, conversation, tone_text, llm_model):
     prompt = prompts.get_reply_prompt(resolved_message, tone_text, conv_text)
     
     if DEBUG_MODE:
-        logger.info(f"DEBUG PROMPT (reply): {prompt}")
+        print("--- Get Workflow Prompt ---")
+        print(prompt)
+        print("--------------------------------")
 
     response = litellm.completion(
         model=llm_model,
@@ -200,6 +302,10 @@ def execute_reply(step, memory, conversation, tone_text, llm_model):
     )
     
     final_message = response.choices[0].message.content.strip()
+
+    if DEBUG_MODE:
+        print("---agent output---")
+        print(final_message)
     return StepExecutionResult("blocking", message=final_message)
 
 def execute_set_variable(step, memory):
@@ -210,7 +316,19 @@ def execute_set_variable(step, memory):
     value = step.get('value')
     # Resolve value if it's a template
     if isinstance(value, str):
-        value = memory.resolve_templates(value)
+        # Check if it's a simple variable reference like "{{ variable_name }}"
+        import re
+        var_ref_pattern = r'^\{\{\s*(\w+)\s*\}\}$'
+        match = re.match(var_ref_pattern, value.strip())
+        if match:
+            # It's a direct variable reference, get the variable value directly
+            var_name = match.group(1)
+            value = memory.get_variable(var_name)
+            if value is None:
+                logger.warning(f"variable {var_name} not found in memory")
+        else:
+            # It's a template string, resolve it
+            value = memory.resolve_templates(value)
     
     memory.set_variable(variable, value)
     return StepExecutionResult("completed")
@@ -260,113 +378,97 @@ def execute_condition(step, memory, conversation, tone_text, llm_model):
     else:
         # Fallback to LLM for complex/unknown operators
         conv_text = memory.get_history_as_text()
-        prompt = prompts.get_condition_eval_prompt(json.dumps(condition), str(memory.variables), conv_text)
+        prompt = prompts.get_condition_eval_prompt(condition, str(memory.variables), conv_text)
         
         if DEBUG_MODE:
-            logger.info(f"DEBUG PROMPT (condition): {prompt}")
+            print("--- Get Workflow Prompt ---")
+            print(prompt)
+            print("--------------------------------")
             
         response = litellm.completion(model=llm_model, messages=[{"role": "user", "content": prompt}])
-        is_true = response.choices[0].message.content.strip().lower() == 'true'
+        content = response.choices[0].message.content.strip()
+        
+        if DEBUG_MODE:
+            print("---agent output---")
+            print(content)
+            
+        is_true = content.lower() == 'true'
         
     return StepExecutionResult("completed", result={"condition": is_true})
 
 def execute_use_tool(step, memory, tools):
     """
     Calls an external tool (e.g., airline tools) and handles the output.
+    Uses ToolExecutor to handle workflow syntax (input lists) to tool parameters.
     """
     tool_name = step.get('tool_name')
+    
+    # Check if tool exists
+    if not tools.has_tool(tool_name):
+        return StepExecutionResult("failed", message=f"Tool {tool_name} not found")
     
     # Special handling for calculate
     if tool_name == 'calculate':
         expression = step.get('expression')
         resolved_expr = memory.resolve_templates(expression)
         try:
-            result = tools.calculate(resolved_expr)
-            # Calculate usually implies we store the result implicitly or explicitly
-            # The YAML usually has 'set_variables' or we use 'calculate_result'?
-            # Let's check if the result is needed clearly.
-            # Usually tool results are stored in a variable named "{tool_name}_result" by default?
-            # Or the step has explicit variable setting?
-            
+            result = tools.execute('calculate', **{'expression': resolved_expr})
             # Default storage
             memory.set_variable(f"{tool_name}_result", result)
-             # Also store as calculate_result as per some workflow examples
+            # Also store as calculate_result as per some workflow examples
             memory.set_variable("calculate_result", result)
-            
             return StepExecutionResult("completed")
         except Exception as e:
-            print(f"Calculation failed: {e}")
+            logger.error(f"calculation failed: {e}")
             return StepExecutionResult("failed")
-
-    # Generic tool call
-    if not hasattr(tools, tool_name):
-        return StepExecutionResult("failed", message=f"Tool {tool_name} not found")
-        
-    tool_func = getattr(tools, tool_name)
     
-    # Prepare arguments
-    # The step arguments are all keys except id, action, tool_name, set_variables, filter
-    tool_args = {}
+    # Prepare arguments from step
+    # Extract 'input' if present (workflow syntax for positional args)
+    input_list = None
+    if 'input' in step:
+        input_value = step['input']
+        if isinstance(input_value, list):
+            # Resolve templates in input list
+            input_list = [memory.resolve_templates(v) if isinstance(v, str) else v for v in input_value]
+        else:
+            # Single value, wrap in list
+            input_list = [memory.resolve_templates(input_value) if isinstance(input_value, str) else input_value]
+    
+    # Prepare keyword arguments (all other fields except reserved ones)
+    kwargs = {}
+    reserved_keys = ['id', 'action', 'tool_name', 'set_variables', 'filter', 'then', 'else', 'input']
     for key, value in step.items():
-        if key in ['id', 'action', 'tool_name', 'set_variables', 'filter', 'then', 'else']:
+        if key in reserved_keys:
             continue
         # Resolve templates in argument values
         if isinstance(value, str):
-             tool_args[key] = memory.resolve_templates(value)
+            kwargs[key] = memory.resolve_templates(value)
         elif isinstance(value, list):
-             # Resolve list of strings
-             tool_args[key] = [memory.resolve_templates(v) if isinstance(v, str) else v for v in value]
+            # Resolve list of strings
+            kwargs[key] = [memory.resolve_templates(v) if isinstance(v, str) else v for v in value]
         else:
-             tool_args[key] = value
-             
-    # Clean up args (some args might be passed as "input" list for some tools?)
-    # Looking at YAML: `input: ["{{ user_id }}", ...]` for book_reservation
-    if 'input' in tool_args and tool_name == 'book_reservation':
-        # Map input list to actual arguments for book_reservation?
-        # Or does book_reservation take distinct args?
-        # The tools.py definition shows distinct args.
-        # This implies we need to map the list 'input' to the function args in order.
-        # This is tricky without introspection or strict contract.
-        # Let's check tools.py again. book_reservation signature:
-        # (user_id, origin, destination, flight_type, cabin, flights, ...)
-        
-        # If 'input' is passed, we might need to unpack it.
-        # But 'book_reservation' step in YAML line 209 has `input` as a list.
-        # We need to unpack `input` to *args.
-        inp = tool_args.pop('input')
-        if isinstance(inp, list):
-            # We will use *inp for the function call? 
-            # But we also have keyword args. logic is clearer if we use kwargs.
-            # But if the YAML gives a list, we must map positionally.
-            try:
-                # Introspection to get arg names? 
-                # Or just assume the order matches?
-                # Let's assume order matches for now or try to map.
-                # Actually, tools.py uses type hints.
-                result = tool_func(*inp)
-            except Exception as e:
-                print(f"Tool call failed with positional args: {e}")
-                return StepExecutionResult("failed")
-        else:
-             # Single input?
-             result = tool_func(inp)
-             
-    else:
-        # Use kwargs
-        try:
-             result = tool_func(**tool_args)
-        except Exception as e:
-             print(f"Tool call {tool_name} failed: {e}")
-             return StepExecutionResult("failed", message=str(e))
+            kwargs[key] = value
     
-    # Store result
-    # Default: {tool_name}_result
-    memory.set_variable(f"{tool_name}_result", result)
+    # Execute tool using ToolExecutor
+    try:
+        if input_list is not None:
+            # Use input list (workflow syntax)
+            result = tools.execute(tool_name, input_list=input_list)
+        elif kwargs:
+            # Use keyword arguments
+            result = tools.execute(tool_name, **kwargs)
+        else:
+            # No arguments provided
+            result = tools.execute(tool_name, input_list=[])
+    except Exception as e:
+        logger.error(f"tool call {tool_name} failed: {e}")
+        return StepExecutionResult("failed", message=str(e))
     
     # Handle set_variables mapping
     # "set_variables": ["var1", "var2"] -> map from result object attributes or dict keys
     set_vars = step.get('set_variables', [])
     if set_vars:
+        # If set_variables is specified, only store the extracted variables (not the full result)
         # result can be Object or Dict
         for var_name in set_vars:
             val = None
@@ -377,22 +479,101 @@ def execute_use_tool(step, memory, tools):
             
             if val is not None:
                 memory.set_variable(var_name, val)
+    else:
+        # If set_variables is not specified, store the full result
+        # Default: {tool_name}_result
+        memory.set_variable(f"{tool_name}_result", result)
                 
     return StepExecutionResult("completed")
+
+def execute_instruction(step, memory, conversation, tone_text, llm_model, tools):
+    """
+    Executes an instruction action where the LLM performs a complex task.
+    The LLM is given an instruction, available tools, and memory context,
+    and should return a value to be stored in a variable.
+    """
+    instruction_template = step.get('instruction')
+    if not instruction_template:
+        logger.error("instruction action missing 'instruction' field")
+        return StepExecutionResult("failed", message="Instruction action missing 'instruction' field")
+    
+    # Resolve templates in instruction
+    instruction_text = memory.resolve_templates(instruction_template)
+    
+    # Get available tools
+    tools_available = step.get('tools_available', [])
+    
+    # Get variable name to set
+    set_variable = step.get('set_variable')
+    if not set_variable:
+        logger.error("instruction action missing 'set_variable' field")
+        return StepExecutionResult("failed", message="Instruction action missing 'set_variable' field")
+    
+    # Get current memory variables (for context)
+    memory_variables = memory.variables
+    
+    # Get conversation context
+    conv_text = memory.get_history_as_text()
+    
+    # Build prompt
+    prompt = prompts.get_instruction_prompt(
+        instruction_text,
+        tools_available,
+        memory_variables,
+        conv_text,
+        tone_text
+    )
+    
+    if DEBUG_MODE:
+        print("--- Instruction Prompt ---")
+        print(prompt)
+        print("--------------------------------")
+    
+    # Call LLM
+    response = litellm.completion(
+        model=llm_model,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    content = clean_json_response(response.choices[0].message.content)
+    
+    if DEBUG_MODE:
+        print("---agent yaml output---")
+        print(content)
+    
+    try:
+        # Parse YAML response
+        import yaml
+        result = yaml.safe_load(content)
+        
+        # Extract the result value
+        result_value = result.get('result')
+        
+        # Store in memory
+        if result_value is not None:
+            memory.set_variable(set_variable, result_value)
+            return StepExecutionResult("completed")
+        else:
+            # Task couldn't be completed
+            logger.warning(f"instruction task returned null result")
+            memory.set_variable(set_variable, None)
+            return StepExecutionResult("completed")  # Still completed, just with null value
+            
+    except Exception as e:
+        logger.error(f"error parsing instruction response: {e}")
+        return StepExecutionResult("failed", message=f"Failed to parse instruction result: {e}")
 
 def handle_fallback(memory, tools):
     """
     Executes the fallback action (transfer to human) when data or logic path is missing.
     """
-    result = tools.transfer_to_human_agents("Workflow fallback triggered")
+    result = tools.execute('transfer_to_human_agents', **{'summary': "Workflow fallback triggered"})
     return StepExecutionResult("blocking", message=result)
 
 def execute_step(step, memory, conversation, tone_text, llm_model, tools):
     """
     Main entry point for executing an individual step based on its action type.
     """
-    if DEBUG_MODE:
-        logger.info(f"DEBUG STEP EXECUTION: {step}")
 
     action = step.get('action')
     
@@ -410,8 +591,104 @@ def execute_step(step, memory, conversation, tone_text, llm_model, tools):
         return execute_condition(step, memory, conversation, tone_text, llm_model)
     elif action == 'use_tool':
         return execute_use_tool(step, memory, tools)
+    elif action == 'instruction':
+        return execute_instruction(step, memory, conversation, tone_text, llm_model, tools)
+    elif action == 'loop':
+        return execute_loop(step, memory, conversation, tone_text, llm_model, tools)
     elif action == 'use_subworkflow':
         # Handled by orchestrator usually, or we treat it as completed so orchestrator can push stack
         return StepExecutionResult("completed") # Orchestrator will see action type
         
     return StepExecutionResult("failed", message=f"Unknown action: {action}")
+
+def execute_loop(step, memory, conversation, tone_text, llm_model, tools):
+    """
+    Iterates over a list, sets a loop variable, and executes a subaction for each item.
+    Collects results into a list.
+    """
+    loop_over_var = step.get('loop_over')
+    loop_variable_name = step.get('loop_variable')
+    subaction = step.get('subaction')
+    set_variable_name = step.get('set_variable')
+    
+    if not loop_over_var or not loop_variable_name or not subaction or not set_variable_name:
+         return StepExecutionResult("failed", message="Loop action missing required fields (loop_over, loop_variable, subaction, set_variable)")
+
+    # Get the list from memory
+    items = []
+    if isinstance(loop_over_var, list):
+        items = loop_over_var
+    else:
+        # Try getting directly first (if it's a variable name)
+        items = memory.get_variable(loop_over_var)
+        
+        # If not found or if it looks like a template
+        if items is None and isinstance(loop_over_var, str) and "{{" in loop_over_var:
+             items = memory.resolve_templates(loop_over_var)
+
+    if not isinstance(items, list):
+         logger.warning(f"Loop target {loop_over_var} is not a list: {items}")
+         items = []
+
+    results = []
+    original_val = memory.get_variable(loop_variable_name)
+    
+    for item in items:
+        # Set loop variable
+        memory.set_variable(loop_variable_name, item)
+        
+        # Execute subaction
+        result = execute_step(subaction, memory, conversation, tone_text, llm_model, tools)
+        
+        if result.status == "failed":
+            logger.error(f"Loop subaction failed for item {item}: {result.message}")
+            return StepExecutionResult("failed", message=f"Loop failed on item {item}: {result.message}")
+        
+        if result.status == "blocking":
+             return result
+             
+        # Collection strategy
+        sub_tool_name = subaction.get('tool_name')
+        if sub_tool_name:
+             # Check if set_variables was used in subaction
+             sub_set_vars = subaction.get('set_variables')
+             
+             if sub_set_vars:
+                 # Collect specific extracted variables into a dictionary
+                 item_result = {}
+                 for var_name in sub_set_vars:
+                     item_result[var_name] = memory.get_variable(var_name)
+                 results.append(item_result)
+             else:
+                 # Default: collect the full result object
+                 val = memory.get_variable(f"{sub_tool_name}_result")
+                 results.append(val)
+                 
+             # Clear the tool result for next iteration to prevent stale data if next call fails
+             # (Though execute_use_tool usually overwrites or errors)
+             if f"{sub_tool_name}_result" in memory.variables:
+                  pass # Actually memory.set_variable doesn't easily support delete, just overwrite is fine.
+        elif subaction.get('action') == 'set_variable':
+             var_name = subaction.get('variable')
+             val = memory.get_variable(var_name)
+             results.append(val)
+        elif subaction.get('action') == 'fetch_with_message' or subaction.get('action') == 'fetch':
+             # For fetch, we can check the field
+             field = subaction.get('field')
+             if field:
+                 val = memory.get_variable(field)
+                 results.append(val)
+             else:
+                 # Fallback
+                 results.append(None)
+        else:
+             results.append(None)
+    
+    # Restore original variable if it existed
+    if original_val is not None:
+        memory.set_variable(loop_variable_name, original_val)
+        
+    # Store aggregated results
+    memory.set_variable(set_variable_name, results)
+    
+    return StepExecutionResult("completed")

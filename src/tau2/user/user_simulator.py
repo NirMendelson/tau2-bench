@@ -163,7 +163,6 @@ class UserSimulator(BaseUser):
         )
 
         user_response = assistant_message.content
-        logger.debug(f"Response: {user_response}")
 
         user_message = UserMessage(
             role="user",
