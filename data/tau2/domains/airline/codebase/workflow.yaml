@@ -1,0 +1,1761 @@
+# Existing workflow
+workflow: BookFlight
+when: "user wants to book a flight reservation or to find available flights"
+
+keywords:
+  - book flight
+  - flight reservation
+  - find flights
+  - available flights
+  - flight booking
+
+examples:
+  - "I want to book a flight"
+  - "Can you help me find available flights?"
+  - "I need to make a flight reservation"
+  - "Show me flights from New York to London"
+
+steps:
+  # Step 1: Get user ID
+  - id: fetch_user_id
+    action: fetch
+    field: user_id
+  
+  # Step 2: Get trip details
+  - id: fetch_trip_details
+    action: fetch
+    fields:
+      - trip_type
+      - origin
+      - destination
+  
+  # Step 3: Get date
+  - id: fetch_date
+    action: fetch
+    field: date
+  
+  # Step 4: Get cabin class
+  - id: fetch_cabin
+    action: fetch
+    field: cabin
+  
+  # Step 5: Get number of passengers
+  - id: fetch_number_of_passengers
+    action: fetch_with_condition
+    field: number_of_passengers
+    condition:
+      operator: less_equal
+      left: "{{ number_of_passengers }}"
+      right: 5
+    then:
+      steps:
+        # Step 6: Ask about flight preference
+        - id: fetch_flight_preference
+          action: fetch_with_condition
+          field: flight_preference
+          condition:
+            operator: eq
+            left: "{{ flight_preference }}"
+            right: ["direct only"]
+          then:
+            steps:
+              # Search direct flights only
+              - id: search_direct_flights
+                action: use_tool
+                tool_name: search_direct_flight
+                input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+                filter:
+                  - field: available_seats.{{ cabin }}
+                    operator: gte
+                    value: "{{ number_of_passengers }}"
+          else:
+            steps:
+              - id: check_one_stop_only
+                action: conditional
+                condition:
+                  operator: contains
+                  left: "{{ flight_preference }}"
+                  right: ["one stop only"]
+                then:
+                  steps:
+                    # Search one-stop flights only
+                    - id: search_onestop_flights
+                      action: use_tool
+                      tool_name: search_onestop_flight
+                      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+                      filter:
+                        - field: available_seats.{{ cabin }}
+                          operator: gte
+                          value: "{{ number_of_passengers }}"
+                else:
+                  # Search both direct and one-stop flights
+                  steps:
+                    - id: search_direct_flights
+                      action: use_tool
+                      tool_name: search_direct_flight
+                      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+                      filter:
+                        - field: available_seats.{{ cabin }}
+                          operator: gte
+                          value: "{{ number_of_passengers }}"
+                    - id: search_onestop_flights
+                      action: use_tool
+                      tool_name: search_onestop_flight
+                      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+                      filter:
+                        - field: available_seats.{{ cabin }}
+                          operator: gte
+                          value: "{{ number_of_passengers }}"
+        
+        # Step 8: Display flight results
+        - id: display_flight_results
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ flight_preference }}"
+            right: ["direct only"]
+          then:
+            id: display_flight_results_direct
+            action: fetch_with_message
+            field: selected_flights
+            message: |
+              Here are the available direct flights for your trip:
+              
+              {{ search_direct_flight_result }}
+              
+              Please select which flight you'd like to book by providing the flight ID.
+          else:
+            steps:
+              - id: check_display_one_stop
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ flight_preference }}"
+                  right: ["one stop only"]
+                then:
+                  id: check_display_one_stop_true
+                  action: fetch_with_message
+                  field: selected_flights
+                  message: |
+                    Here are the available one-stop flights for your trip:
+                    
+                    {{ search_onestop_flight_result }}
+                    
+                    Please select which flight you'd like to book by providing the flight ID.
+                else:
+                  id: check_display_one_stop_false
+                  action: fetch_with_message
+                  field: selected_flights
+                  message: |
+                    Here are the available flights for your trip:
+                    
+                    Direct flights:
+                    {{ search_direct_flight_result }}
+                    
+                    One-stop flights:
+                    {{ search_onestop_flight_result }}
+                    
+                    Please select which flight you'd like to book by providing the flight ID.
+        
+        # Step 10: Collect passenger information
+        - id: ask_about_travel_insurance
+          action: fetch_with_message
+          field: interested_in_travel_insurance
+          message: |
+            Do you want to purchase travel insurance for your trip? The travel insurance is 30 dollars per passenger and enables full refund if the user needs to cancel the flight given health or weather reasons.
+        
+        - id: collect_all_passengers_details
+          action: fetch_with_condition
+          fields: passengers_details (first_name, last_name, date_of_birth)
+          condition:
+            operator: eq
+            left: "{{ passengers_details }}"
+            right: "complete information for all {{ number_of_passengers }} travelers, each with first_name, last_name, and date_of_birth"
+
+        - id: collect_payment_methods
+          action: use_tool
+          tool_name: get_user_details
+          input: ["{{ user_id }}"]
+          filter:
+            - field: count_travel_certificates
+              operator: less_equal
+              value: 1
+            - field: count_credit_cards
+              operator: less_equal
+              value: 1
+            - field: count_gift_cards
+              operator: less_equal
+              value: 3
+        
+
+        - id: get_explicit_confirmation
+          action: fetch
+          field: explicit_confirmation
+          condition:
+            operator: eq
+            left: "{{ explicit_confirmation }}"
+            right: "yes"
+          then:
+            steps:
+              - id: book_reservation
+                action: use_tool
+                tool_name: book_reservation
+                input: ["{{ user_id }}", "{{ origin }}", "{{ destination }}", "{{ flight_type }}", "{{ cabin }}", "{{ flights }}", "{{ passengers_details }}", "{{ payment_methods }}", "{{ total_baggages }}", "{{ nonfree_baggages }}", "{{ travel_insurance }}"]
+                set_variables:
+                  - reservation_id
+              
+              - id: display_reservation_confirmation
+                action: fetch_with_message
+                field: reservation_id
+                message: |
+                  Your reservation has been confirmed. Your reservation ID is {{ reservation_id }}.
+    else:
+      steps:
+        - id: inform_max_passengers
+          action: reply
+          message: "sorry Each reservation can have at most five passengers."
+
+
+---
+subworkflow: GivingCheckedBagInformation
+when: "user asks about checked bag allowance or baggage information"
+
+steps:
+  # Step 1: Get user ID (if not already available)
+  - id: fetch_user_id
+    action: fetch
+    field: user_id
+  
+  # Step 2: Get cabin class
+  - id: fetch_cabin
+    action: fetch
+    field: cabin
+  
+  # Step 3: Get user details to retrieve membership status
+  - id: get_user_details
+    action: use_tool
+    tool_name: get_user_details
+    input: ["{{ user_id }}"]
+  
+  # Step 4: Fetch membership status (extracted from user details or fetched directly)
+  - id: fetch_membership
+    action: fetch
+    field: membership
+  
+  # Step 5: Calculate free checked bags based on membership and cabin
+  - id: calculate_free_bags
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ membership }}"
+      right: "regular"
+    then:
+      steps:
+        - id: check_regular_cabin
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ cabin }}"
+            right: "basic_economy"
+          then:
+            steps:
+              - id: set_free_bags
+                action: set_variable
+                variable: free_checked_bags_per_passenger
+                value: 0
+          else:
+            steps:
+              - id: check_regular_economy
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ cabin }}"
+                  right: "economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 1
+                else:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 2
+    else:
+      steps:
+        - id: check_silver
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ membership }}"
+            right: "silver"
+          then:
+            steps:
+              - id: check_silver_cabin
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ cabin }}"
+                  right: "basic_economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 1
+                else:
+                  steps:
+                    - id: check_silver_economy
+                      action: conditional
+                      condition:
+                        operator: eq
+                        left: "{{ cabin }}"
+                        right: "economy"
+                      then:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 2
+                      else:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+          else:
+            # Must be gold member
+            steps:
+              - id: check_gold_cabin
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ cabin }}"
+                  right: "basic_economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 2
+                else:
+                  steps:
+                    - id: check_gold_economy
+                      action: conditional
+                      condition:
+                        operator: eq
+                        left: "{{ cabin }}"
+                        right: "economy"
+                      then:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+                      else:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+  
+  
+
+---
+subworkflow: ModifyBaggage
+when: "user wants to modify or change checked baggage for their reservation"
+
+keywords:
+  - modify baggage
+  - change baggage
+  - add baggage
+  - remove baggage
+  - update bags
+  - checked bags
+  - baggage modification
+
+examples:
+  - "I want to add checked bags"
+  - "Can I remove a checked bag?"
+  - "I need to modify my baggage"
+  - "I want to change my checked bags"
+
+steps:
+  # Step 1: Get user ID and determine action (add or remove)
+  - id: fetch_user_id_and_baggage_action
+    action: fetch
+    fields:
+      - user_id
+      - baggage_action
+  
+  # Step 2: Check if user wants to remove (not allowed)
+  - id: check_remove_action
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ baggage_action }}"
+      right: "remove"
+    then:
+      steps:
+        - id: inform_remove_not_possible
+          action: reply
+          message: "I'm sorry, but it's not possible to remove checked bags from an existing reservation. You can only add additional checked bags."
+    else:
+      steps:
+        # Step 3: Fetch reservation ID
+        - id: fetch_reservation_id
+          action: fetch
+          field: reservation_id
+        
+        # Step 4: Get reservation details (uses reservation_id)
+        - id: get_reservation_details
+          action: use_tool
+          tool_name: get_reservation_details
+          input: ["{{ reservation_id }}"]
+          set_variables:
+            - total_baggages
+            - nonfree_baggages
+            - cabin
+            - passengers
+        
+        # Step 5: Get user details to retrieve membership status (uses user_id)
+        - id: get_user_details
+          action: use_tool
+          tool_name: get_user_details
+          input: ["{{ user_id }}"]
+          set_variables:
+            - membership
+
+        # Step 6: Calculate free checked bags based on membership and cabin (uses user_id, cabin, membership)
+        - id: calculate_free_bags
+          action: use_subworkflow
+          subworkflow: GivingCheckedBagInformation
+        
+        # Step 9: Fetch number of passengers
+        - id: fetch_number_of_passengers
+          action: fetch
+          field: number_of_passengers
+        
+        # Step 10: Calculate total free bags for all passengers
+        - id: calculate_total_free_bags
+          action: use_tool
+          tool_name: calculate
+          input: ["{{ free_checked_bags_per_passenger }} * {{ number_of_passengers }}"]
+        
+        # Step 11: Fetch desired total baggages
+        - id: fetch_desired_total_baggages
+          action: fetch
+          field: desired_total_baggages
+        
+        # Step 12: Calculate total baggages minus free bags
+        - id: calculate_baggages_minus_free
+          action: use_tool
+          tool_name: calculate
+          input: ["{{ desired_total_baggages }} - {{ calculate_total_free_bags_result }}"]
+        
+        # Step 13: Determine new nonfree baggages (max of 0 or calculated value)
+        - id: determine_new_nonfree_baggages
+          action: conditional
+          condition:
+            operator: gte
+            left: "{{ calculate_baggages_minus_free_result }}"
+            right: 0
+          then:
+            steps:
+              - id: set_new_nonfree_baggages
+                action: set_variable
+                variable: new_nonfree_baggages
+                value: "{{ calculate_baggages_minus_free_result }}"
+          else:
+            steps:
+              - id: set_new_nonfree_baggages_zero
+                action: set_variable
+                variable: new_nonfree_baggages
+                value: 0
+        
+        # Step 14: Calculate price difference
+        - id: calculate_price_difference
+          action: use_tool
+          tool_name: calculate
+          input: ["50 * ({{ new_nonfree_baggages }} - {{ nonfree_baggages }})"]
+          set_variable:
+            - price_difference
+        
+        # Step 15: Ask for confirmation
+        - id: inform_price_difference_and_confirm
+          action: fetch_with_message
+          field: change_confirmed
+          message: |
+            For changing your baggage from {{ nonfree_baggages }} non-free bags to {{ new_nonfree_baggages }} non-free bags (total {{ desired_total_baggages }} bags), the price difference is {{ price_difference }} dollars. You will need to pay this additional amount.
+            
+            Please confirm the change by typing 'yes' or 'no'.
+        
+        # Step 16: Check confirmation
+        - id: check_change_confirmed
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ change_confirmed }}"
+            right: "yes"
+          then:
+            steps:
+              # Step 17: Fetch payment_id from user
+              - id: fetch_payment_id
+                action: use_tool
+                tool_name: get_user_details
+                input: ["{{ user_id }}"]
+                set_variables:
+                  - payment_id
+              
+              # Step 18: Update reservation baggages
+              - id: update_reservation_baggages
+                action: use_tool
+                tool_name: update_reservation_baggages
+                input: ["{{ reservation_id }}", "{{ desired_total_baggages }}", "{{ new_nonfree_baggages }}", "{{ payment_id }}"]
+              
+              - id: confirm_baggage_updated
+                action: reply
+                message: "Your baggage has been successfully updated."
+          else:
+            steps:
+              - id: inform_change_cancelled
+                action: reply
+                message: "The baggage change has been cancelled. Your reservation remains unchanged."
+
+---
+subworkflow: ModifyCabin
+when: "user wants to change the cabin class of their flight reservation"
+
+steps:
+  - id: fetch_requested_cabin
+    action: fetch
+    field: requested_cabin
+  
+  - id: check_flight_type_and_search
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ current_flight_type }}"
+      right: "direct"
+    then:
+      steps:
+        - id: search_new_cabin_price_direct
+          action: use_tool
+          tool_name: search_direct_flight
+          input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+          set_variables:
+            - requested_cabin_price
+
+    else:
+      steps:
+        - id: search_new_cabin_price_onestop
+          action: use_tool
+          tool_name: search_onestop_flight
+          input: ["{{ current_origin }}", "{{ current_destination }}", "{{ current_date }}"]
+          set_variables:
+            - requested_cabin_price
+
+            
+  
+  - id: check_price_and_calculate_difference
+    action: conditional
+    condition:
+      operator: gt
+      left: "{{ requested_cabin_price }}"
+      right: "{{ current_flight_price }}"
+    then:
+      steps:
+        - id: calculate_price_difference_higher
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ current_flight_type }}"
+            right: "direct"
+          then:
+            steps:
+              - id: calculate_direct_price_diff_higher
+                action: use_tool
+                tool_name: calculate
+                input: ["{{ requested_cabin_price }} - {{ current_flight_price }}"]
+                set_variable:
+                  - price_difference
+          else:
+            steps:
+              - id: calculate_onestop_price_diff_higher
+                action: use_tool
+                tool_name: calculate
+                input: ["{{ requested_cabin_price }} - {{ current_flight_price }}"]
+                set_variable:
+                  - price_difference
+        
+        - id: inform_price_difference_higher
+          action: fetch_with_message
+          field: change_confirmed
+          message: |
+            For changing from cabin {{ current_cabin }} to {{ requested_cabin }}, for flight from {{ current_origin }} to {{ current_destination }} on {{ current_date }}, the price difference is {{ price_difference }}. You will need to add this amount. Please confirm the change by typing 'yes' or 'no'.
+    else:
+      steps:
+        - id: calculate_price_difference_lower
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ current_flight_type }}"
+            right: "direct"
+          then:
+            steps:
+              - id: calculate_direct_price_diff_lower
+                action: use_tool
+                tool_name: calculate
+                input: ["{{ current_flight_price }} - {{ requested_cabin_price }}"]
+                set_variable:
+                  - price_difference
+          else:
+            steps:
+              - id: calculate_onestop_price_diff_lower
+                action: use_tool
+                tool_name: calculate
+                input: ["{{ current_flight_price }} - {{ requested_cabin_price }}"]
+                set_variable:
+                  - price_difference
+        
+        - id: inform_price_difference_lower
+          action: fetch_with_message
+          field: change_confirmed
+          message: |
+            For changing from cabin {{ current_cabin }} to {{ requested_cabin }}, for flight from {{ current_origin }} to {{ current_destination }} on {{ current_date }}, the price difference is {{ price_difference }}. You will be refunded this amount. Please confirm the change by typing 'yes' or 'no'.
+
+  - id: check_change_confirmed
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ change_confirmed }}"
+      right: "yes"
+    then:
+      steps:
+        - id: fetch_payment_id
+          action: use_tool
+          tool_name: get_user_details
+          input: ["{{ user_id }}"]
+          set_variables:
+            - payment_id
+        
+        - id: update_reservation_cabin
+          action: use_tool
+          tool_name: update_reservation_flights
+          input: ["{{ reservation_id }}", "{{ requested_cabin }}", "{{ current_flights }}", "{{ payment_id }}"]
+
+  
+---
+  workflow: ModifyFlightReservation
+  when: "user wants to modify or change their flight reservation"
+
+  keywords:
+    - modify flight reservation
+    - change flight reservation
+    - modify flight
+    - change flight
+    - flight modification
+    - flight change
+
+  steps:
+    # Step 1: Get user ID and reservation ID
+    - id: fetch_user_and_reservation
+      action: fetch
+      fields:
+        - user_id
+        - reservation_id
+    
+    # Step 2: Get reservation details to get current cabin and flight info
+    - id: get_reservation_details
+      action: use_tool
+      tool_name: get_reservation_details
+      input: ["{{ reservation_id }}"]
+      set_variables:
+        - current_cabin
+        - current_flights
+        - current_price
+        - current_flight_type
+        - current_origin
+        - current_destination
+        - current_date
+        - current_number_of_passengers
+        - current_total_baggages
+        - current_nonfree_baggages
+
+    # Step 3: Check if basic economy (cannot be modified)
+    - id: check_basic_economy
+      action: conditional
+      condition:
+        operator: eq
+        left: "{{ current_cabin }}"
+        right: "basic_economy"
+      then:
+        steps:
+          - id: inform_basic_economy_not_allowed
+            action: reply
+            message: "I'm sorry, but basic economy flights cannot be modified."
+      else:
+        steps:
+          - id: fetch_requested_change
+            action: fetch_with_message
+            field: requested_change_type
+            message: |
+              What would you like to change about your flight reservation?
+              Please select one of the following options:
+              - Cabin class
+              - Flight dates
+              - Baggage
+              - Passengers details
+          
+          # Step 4: Handle different change types using nested conditionals
+          - id: handle_requested_change
+            action: conditional
+            condition:
+              operator: eq
+              left: "{{ requested_change_type }}"
+              right: "cabin"
+            then:
+              steps:
+                - id: call_modify_cabin
+                  action: use_subworkflow
+                  subworkflow: ModifyCabin
+            else:
+              steps:
+                - id: check_baggage_change
+                  action: conditional
+                  condition:
+                    operator: eq
+                    left: "{{ requested_change_type }}"
+                    right: "baggage"
+                  then:
+                    steps:
+                      - id: call_modify_baggage
+                        action: use_subworkflow
+                        subworkflow: ModifyBaggage
+                  else:
+                    steps:
+                      - id: check_passengers_details_change
+                        action: conditional
+                        condition:
+                          operator: eq
+                          left: "{{ requested_change_type }}"
+                          right: "passengers details"
+                        then:
+                          steps:
+                            - id: call_modify_passengers_details
+                              action: use_subworkflow
+                              subworkflow: ModifyPassengersDetails
+                        else:
+                          steps:
+                            - id: check_flight_dates_change
+                              action: conditional
+                              condition:
+                                operator: eq
+                                left: "{{ requested_change_type }}"
+                                right: "flight dates"
+                              then:
+                                steps:
+                                  - id: call_modify_dates
+                                    action: use_subworkflow
+                                    subworkflow: ModifyDates
+                              else:
+                                steps:
+                                  - id: handle_other_change_types
+                                    action: reply
+                                    message: "This change type is not yet supported. Please contact customer service for assistance with {{ requested_change_type }} changes."
+
+
+---
+subworkflow: ModifyDates
+when: "user wants to change the flight dates of their reservation"
+
+steps:
+  # Step 1: Get requested dates
+  - id: fetch_requested_dates
+    action: fetch
+    field: requested_dates
+  
+  # Step 2: Check flight type and search for available flights on new dates
+  - id: check_flight_type_and_search
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ current_flight_type }}"
+      right: "direct"
+    then:
+      steps:
+        # Search direct flights for new dates
+        - id: search_direct_flights_new_dates
+          action: use_tool
+          tool_name: search_direct_flight
+          input: ["{{ current_origin }}", "{{ current_destination }}", "{{ requested_dates }}"]
+          filter:
+            - field: available_seats.{{ current_cabin }}
+              operator: gte
+              value: "{{ current_number_of_passengers }}"
+    else:
+      steps:
+        # Search one-stop flights for new dates
+        - id: search_onestop_flights_new_dates
+          action: use_tool
+          tool_name: search_onestop_flight
+          input: ["{{ current_origin }}", "{{ current_destination }}", "{{ requested_dates }}"]
+          filter:
+            - field: available_seats.{{ current_cabin }}
+              operator: gte
+              value: "{{ current_number_of_passengers }}"
+  
+  # Step 3: Check if any flights were found and handle accordingly
+  - id: check_flights_found
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ current_flight_type }}"
+      right: "direct"
+    then:
+      steps:
+        # For direct flights, check if results are empty
+        - id: check_direct_flights_empty
+          action: fetch_with_message
+          field: has_flights
+          message: |
+            I searched for direct flights from {{ current_origin }} to {{ current_destination }} on {{ requested_dates }}.
+            
+            Search results: {{ search_direct_flight_result }}
+            
+            Are there any available flights in the results above? Please respond with 'yes' if flights are available, or 'no' if the results are empty.
+        
+        - id: handle_direct_flights_response
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ has_flights }}"
+            right: "no"
+          then:
+            steps:
+              # No flights found - ask if user wants other dates
+              - id: ask_other_dates_direct
+                action: fetch_with_message
+                field: want_other_dates
+                message: |
+                  I'm sorry, but there are no available direct flights from {{ current_origin }} to {{ current_destination }} on {{ requested_dates }} for {{ current_cabin }} cabin with {{ current_number_of_passengers }} passenger(s).
+                  
+                  Would you like to search for other dates? Please respond with 'yes' or 'no'.
+              
+              - id: handle_other_dates_direct
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ want_other_dates }}"
+                  right: "yes"
+                then:
+                  steps:
+                    - id: fetch_new_dates_direct
+                      action: fetch
+                      field: requested_dates
+                      # Note: In a real implementation, this would loop back, but workflows don't support loops
+                      # The user would need to restart the modification process
+                else:
+                  steps:
+                    - id: inform_cannot_proceed_direct
+                      action: reply
+                      message: "I understand. If you'd like to change your flight dates in the future, please let me know."
+          else:
+            steps:
+              # Flights found - display and get selection
+              - id: display_direct_flights_and_select
+                action: fetch_with_message
+                field: selected_flights
+                message: |
+                  Here are the available direct flights for your trip on {{ requested_dates }}:
+                  
+                  {{ search_direct_flight_result }}
+                  
+                  Please select which flight you'd like to change to by providing the flight ID.
+    else:
+      steps:
+        # For one-stop flights, check if results are empty
+        - id: check_onestop_flights_empty
+          action: fetch_with_message
+          field: has_flights
+          message: |
+            I searched for one-stop flights from {{ current_origin }} to {{ current_destination }} on {{ requested_dates }}.
+            
+            Search results: {{ search_onestop_flight_result }}
+            
+            Are there any available flights in the results above? Please respond with 'yes' if flights are available, or 'no' if the results are empty.
+        
+        - id: handle_onestop_flights_response
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ has_flights }}"
+            right: "no"
+          then:
+            steps:
+              # No flights found - ask if user wants other dates
+              - id: ask_other_dates_onestop
+                action: fetch_with_message
+                field: want_other_dates
+                message: |
+                  I'm sorry, but there are no available one-stop flights from {{ current_origin }} to {{ current_destination }} on {{ requested_dates }} for {{ current_cabin }} cabin with {{ current_number_of_passengers }} passenger(s).
+                  
+                  Would you like to search for other dates? Please respond with 'yes' or 'no'.
+              
+              - id: handle_other_dates_onestop
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ want_other_dates }}"
+                  right: "yes"
+                then:
+                  steps:
+                    - id: fetch_new_dates_onestop
+                      action: fetch
+                      field: requested_dates
+                      # Note: In a real implementation, this would loop back, but workflows don't support loops
+                else:
+                  steps:
+                    - id: inform_cannot_proceed_onestop
+                      action: reply
+                      message: "I understand. If you'd like to change your flight dates in the future, please let me know."
+          else:
+            steps:
+              # Flights found - display and get selection
+              - id: display_onestop_flights_and_select
+                action: fetch_with_message
+                field: selected_flights
+                message: |
+                  Here are the available one-stop flights for your trip on {{ requested_dates }}:
+                  
+                  {{ search_onestop_flight_result }}
+                  
+                  Please select which flight you'd like to change to by providing the flight ID.
+  
+  # Step 4: Calculate price for selected flight(s) and compare with current price
+  - id: calculate_new_flight_price
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ current_flight_type }}"
+      right: "direct"
+    then:
+      steps:
+        - id: extract_direct_flight_price
+          action: use_tool
+          tool_name: calculate
+          input: ["{{ selected_flight_price_per_passenger }} * {{ current_number_of_passengers }}"]
+          set_variable:
+            - new_flight_price
+    else:
+      steps:
+        - id: extract_onestop_flight_price
+          action: use_tool
+          tool_name: calculate
+          input: ["{{ selected_flight_price_per_passenger }} * {{ current_number_of_passengers }}"]
+          set_variable:
+            - new_flight_price
+  
+  # Step 5: Compare prices and calculate difference
+  - id: check_price_and_calculate_difference
+    action: conditional
+    condition:
+      operator: gt
+      left: "{{ new_flight_price }}"
+      right: "{{ current_flight_price }}"
+    then:
+      steps:
+        - id: calculate_price_difference_higher
+          action: use_tool
+          tool_name: calculate
+          input: ["{{ new_flight_price }} - {{ current_flight_price }}"]
+          set_variable:
+            - price_difference
+        
+        - id: inform_price_difference_higher
+          action: fetch_with_message
+          field: change_confirmed
+          message: |
+            For changing your flight from {{ current_origin }} to {{ current_destination }} from {{ current_date }} to {{ requested_dates }}, the price difference is {{ price_difference }} dollars. You will need to pay this additional amount.
+            
+            Please confirm the change by typing 'yes' or 'no'.
+    else:
+      steps:
+        - id: calculate_price_difference_lower
+          action: use_tool
+          tool_name: calculate
+          input: ["{{ current_flight_price }} - {{ new_flight_price }}"]
+          set_variable:
+            - price_difference
+        
+        - id: inform_price_difference_lower
+          action: fetch_with_message
+          field: change_confirmed
+          message: |
+            For changing your flight from {{ current_origin }} to {{ current_destination }} from {{ current_date }} to {{ requested_dates }}, the price difference is {{ price_difference }} dollars. You will be refunded this amount.
+            
+            Please confirm the change by typing 'yes' or 'no'.
+  
+  # Step 6: Check confirmation and update reservation
+  - id: check_change_confirmed
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ change_confirmed }}"
+      right: "yes"
+    then:
+      steps:
+        - id: fetch_payment_id
+          action: use_tool
+          tool_name: get_user_details
+          input: ["{{ user_id }}"]
+          set_variables:
+            - payment_id
+        
+        - id: update_reservation_flights
+          action: use_tool
+          tool_name: update_reservation_flights
+          input: ["{{ reservation_id }}", "{{ current_cabin }}", "{{ selected_flights }}", "{{ payment_id }}"]
+        
+        - id: confirm_reservation_updated
+          action: reply
+          message: "Your flight dates have been successfully updated. Your reservation has been modified to the new dates."
+    else:
+      steps:
+        - id: inform_change_cancelled
+          action: reply
+          message: "The flight date change has been cancelled. Your reservation remains unchanged."
+
+  
+subworkflow: ModifyPassengersDetails
+when: "user wants to change passenger details in their reservation"
+
+steps:
+  # Step 1: Determine what the user wants to change
+  - id: fetch_change_type
+    action: fetch_with_message
+    field: passenger_change_type
+    message: |
+      What would you like to change about the passengers?
+      - Passenger details (names, date of birth)
+      - Number of passengers
+      
+      Please specify which one.
+  
+  # Step 2: Check if they want to change number of passengers (not allowed)
+  - id: check_number_of_passengers_change
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ passenger_change_type }}"
+      right: "number of passengers"
+    then:
+      steps:
+        - id: inform_number_change_not_allowed
+          action: reply
+          message: "I'm sorry, but the number of passengers cannot be modified after booking. You can only update passenger details (names and date of birth) for the existing {{ current_number_of_passengers }} passenger(s)."
+    else:
+      steps:
+        # Step 3: Collect updated passenger details
+        - id: collect_updated_passengers_details
+          action: fetch_with_condition
+          fields: updated_passengers_details (first_name, last_name, date_of_birth)
+          condition:
+            operator: eq
+            left: "{{ updated_passengers_details }}"
+            right: "complete information for all {{ current_number_of_passengers }} travelers, each with first_name, last_name, and date_of_birth"
+        
+        # Step 4: Ask for confirmation
+        - id: confirm_passenger_details_change
+          action: fetch_with_message
+          field: change_confirmed
+          message: |
+            You are updating the passenger details for {{ current_number_of_passengers }} passenger(s) in your reservation.
+            
+            Updated passenger details:
+            {{ updated_passengers_details }}
+            
+            Please confirm this change by typing 'yes' or 'no'.
+        
+        # Step 5: Check confirmation and update
+        - id: check_change_confirmed
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ change_confirmed }}"
+            right: "yes"
+          then:
+            steps:
+              - id: update_reservation_passengers
+                action: use_tool
+                tool_name: update_reservation_passengers
+                input: ["{{ reservation_id }}", "{{ updated_passengers_details }}"]
+              
+              - id: confirm_passengers_updated
+                action: reply
+                message: "The passenger details have been successfully updated for your reservation."
+          else:
+            steps:
+              - id: inform_change_cancelled
+                action: reply
+                message: "The passenger details change has been cancelled. Your reservation remains unchanged."
+
+---
+---
+workflow: FindReservationId
+when: "user doesn't know their reservation ID or asks to find their reservation"
+
+keywords:
+  - find reservation
+  - reservation ID
+  - my reservation
+  - what is my reservation
+  - I don't know my reservation ID
+  - forgot reservation ID
+  - lost reservation number
+  - find my reservation
+
+examples:
+  - "I don't know my reservation ID"
+  - "Can you help me find my reservation?"
+  - "What is my reservation number?"
+  - "I forgot my reservation ID"
+  - "I lost my reservation number"
+  - "How do I find my reservation?"
+
+steps:
+  # Step 1: Get user ID
+  - id: fetch_user_id
+    action: fetch
+    field: user_id
+  
+  # Step 2: Get user details to retrieve reservations list
+  - id: get_user_details
+    action: use_tool
+    tool_name: get_user_details
+    input: ["{{ user_id }}"]
+    set_variables:
+      - reservations_list
+  
+  # Step 3: Check number of reservations
+  - id: check_reservation_count
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ len(reservations_list) }}"
+      right: 0
+    then:
+      steps:
+        - id: inform_no_reservations
+          action: reply
+          message: "I found no reservations associated with your account. Please make sure you're using the correct user ID."
+    else:
+      steps:
+        - id: check_single_reservation
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ len(reservations_list) }}"
+            right: 1
+          then:
+            steps:
+              # User has only one reservation - return it directly
+              - id: return_single_reservation_id
+                action: reply
+                message: "I found one reservation in your account. Your reservation ID is {{ reservations_list[0] }}."
+          else:
+            steps:
+              # User has multiple reservations - need to ask for origin/destination
+              - id: fetch_flight_details
+                action: fetch_with_message
+                fields:
+                  - origin
+                  - destination
+                message: |
+                  I found {{ len(reservations_list) }} reservations in your account. To help me identify which reservation you're looking for, please provide:
+                  - The origin airport code (e.g., SFO, JFK, LAX)
+                  - The destination airport code (e.g., SFO, JFK, LAX)
+              
+              # Step 4: Use instruction action to find matching reservation
+              - id: find_matching_reservation
+                action: instruction
+                instruction: |
+                  Check all reservation IDs in the reservations_list and find the one that has 
+                  origin: {{ origin }} and destination: {{ destination }}.
+                  
+                  Steps to follow:
+                  1. For each reservation_id in reservations_list, call get_reservation_details with that reservation_id
+                  2. Check if the reservation's origin field matches {{ origin }} and destination field matches {{ destination }}
+                  3. Once you find the matching reservation, set the variable 'matching_reservation_id' to that reservation_id
+                  4. If no matching reservation is found after checking all reservations, set matching_reservation_id to null
+                  
+                  Available tools:
+                  - get_reservation_details(reservation_id: str) -> Reservation
+                  
+                  The Reservation object has 'origin' and 'destination' fields that you need to compare.
+                tools_available:
+                  - get_reservation_details
+                set_variable: matching_reservation_id
+              
+              # Step 5: Check if a match was found
+              - id: check_match_found
+                action: conditional
+                condition:
+                  operator: ne
+                  left: "{{ matching_reservation_id }}"
+                  right: null
+                then:
+                  steps:
+                    - id: return_matching_reservation_id
+                      action: reply
+                      message: "I found your reservation! Your reservation ID is {{ matching_reservation_id }}."
+                else:
+                  steps:
+                    - id: inform_no_match_found
+                      action: reply
+                      message: "I couldn't find a reservation matching {{ origin }} to {{ destination }}. Please verify the airport codes and try again, or contact customer service for assistance."
+          
+---
+workflow: CancelFlight
+when: "user wants to cancel their flight reservation"
+
+keywords:
+  - cancel flight
+  - cancel reservation
+  - cancel my flight
+  - cancel booking
+  - flight cancellation
+
+examples:
+  - "I want to cancel my flight"
+  - "Can you cancel my reservation?"
+  - "I need to cancel my flight booking"
+  - "Cancel my flight reservation"
+
+steps:
+  # Step 1: Get user ID and reservation ID
+  - id: fetch_user_and_reservation
+    action: fetch
+    fields:
+      - user_id
+      - reservation_id
+  
+  # Step 2: Get cancellation reason
+  - id: fetch_cancellation_reason
+    action: fetch_with_message
+    field: cancellation_reason
+    message: |
+      What is the reason for cancellation?
+      - Change of plan
+      - Airline cancelled flight
+      - Other reasons
+      
+      Please specify the reason.
+  
+  # Step 3: Get reservation details to extract flight information
+  - id: get_reservation_details
+    action: use_tool
+    tool_name: get_reservation_details
+    input: ["{{ reservation_id }}"]
+    set_variables:
+      - reservation_flights
+      - reservation_created_at
+      - reservation_cabin
+      - reservation_insurance
+  
+  # Step 4: Extract flight numbers and dates from reservation
+  - id: extract_flight_info
+    action: instruction
+    instruction: |
+      Extract the flight numbers and dates from the reservation_flights.
+      The reservation_flights is a list of ReservationFlight objects, each containing:
+      - flight_number: The flight number (e.g., "HAT001")
+      - date: The flight date in YYYY-MM-DD format
+      - origin: The origin airport code
+      - destination: The destination airport code
+      
+      Set the following variables:
+      - flight_numbers: A list of all flight numbers from the reservation
+      - flight_dates: A list of all flight dates from the reservation
+      - flight_origins: A list of all origin airport codes
+      - flight_destinations: A list of all destination airport codes
+    set_variables:
+      - flight_numbers
+      - flight_dates
+      - flight_origins
+      - flight_destinations
+  
+  # Step 5: Check flight status for each flight and ensure none are landed
+  - id: check_flight_statuses
+    action: instruction
+    instruction: |
+      For each flight in the reservation, check its status using get_flight_status tool.
+      
+      Steps:
+      1. Iterate through flight_numbers and flight_dates (they should have the same length)
+      2. For each pair (flight_number, date), call get_flight_status(flight_number, date)
+      3. Collect all flight statuses in a list called flight_statuses
+      4. Check if any flight status is "landed"
+      5. If any flight has status "landed", set can_check_cancellation to false and set a message explaining that flights that have already landed cannot be cancelled
+      6. If no flights are landed, set can_check_cancellation to true
+      
+      Available tools:
+      - get_flight_status(flight_number: str, date: str) -> str
+      
+      The status can be: "available", "on time", "flying", "landed", "cancelled", or "delayed"
+    tools_available:
+      - get_flight_status
+    set_variables:
+      - flight_statuses
+      - can_check_cancellation
+  
+  # Step 6: Check if flights are landed - if so, cannot cancel
+  - id: check_if_flights_landed
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ can_check_cancellation }}"
+      right: false
+    then:
+      steps:
+        - id: inform_flights_landed
+          action: reply
+          message: "I'm sorry, but flights that have already landed cannot be cancelled."
+    else:
+      steps:
+        # Step 7: Check cancellation eligibility conditions
+        - id: check_booking_within_24hr
+          action: instruction
+          instruction: |
+            Check if the reservation was created within the last 24 hours.
+            
+            Steps:
+            1. Get the reservation_created_at timestamp (format: YYYY-MM-DDTHH:MM:SS)
+            2. Get today_date from memory (format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
+            3. Calculate the time difference between today_date and reservation_created_at
+            4. If the difference is less than 24 hours, set booking_within_24hr to true, else false
+            
+            Note: You may need to parse the datetime strings and calculate hours difference.
+            Set booking_within_24hr variable to true or false.
+          set_variable: booking_within_24hr
+        
+        # Step 8: Check if flight status is cancelled
+        - id: check_flight_cancelled
+          action: instruction
+          instruction: |
+            Check if any flight in flight_statuses has status "cancelled".
+            If at least one flight has status "cancelled", set flight_is_cancelled to true, else false.
+          set_variable: flight_is_cancelled
+        
+        # Step 9: Check if cabin is business
+        - id: check_business_cabin
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ reservation_cabin }}"
+            right: "business"
+          then:
+            steps:
+              - id: set_business_cabin_true
+                action: set_variable
+                variable: cabin_is_business
+                value: true
+          else:
+            steps:
+              - id: set_business_cabin_false
+                action: set_variable
+                variable: cabin_is_business
+                value: false
+        
+        # Step 10: Check if insurance is yes
+        - id: check_insurance
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ reservation_insurance }}"
+            right: "yes"
+          then:
+            steps:
+              - id: set_insurance_true
+                action: set_variable
+                variable: has_insurance
+                value: true
+          else:
+            steps:
+              - id: set_insurance_false
+                action: set_variable
+                variable: has_insurance
+                value: false
+        
+        # Step 11: Check if at least one cancellation condition is met
+        - id: check_cancellation_eligibility
+          action: instruction
+          instruction: |
+            Check if at least one of the following conditions is true:
+            1. booking_within_24hr is true
+            2. flight_is_cancelled is true
+            3. cabin_is_business is true
+            4. has_insurance is true
+            
+            If at least one is true, set can_cancel to true, else set can_cancel to false.
+          set_variable: can_cancel
+        
+        # Step 12: Check if cancellation is allowed
+        - id: check_if_can_cancel
+          action: conditional
+          condition:
+            operator: eq
+            left: "{{ can_cancel }}"
+            right: true
+          then:
+            steps:
+              # Step 13: Ask for confirmation
+              - id: ask_confirmation
+                action: fetch_with_message
+                field: cancellation_confirmed
+                message: |
+                  I can help you cancel your reservation {{ reservation_id }}.
+                  
+                  The refund will go to the original payment methods within 5 to 7 business days.
+                  
+                  Please confirm that you want to proceed with the cancellation by typing 'yes' or 'no'.
+              
+              # Step 14: Check confirmation and cancel
+              - id: check_confirmation
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ cancellation_confirmed }}"
+                  right: "yes"
+                then:
+                  steps:
+                    - id: cancel_reservation
+                      action: use_tool
+                      tool_name: cancel_reservation
+                      input: ["{{ reservation_id }}"]
+                    
+                    - id: confirm_cancellation
+                      action: reply
+                      message: "Your reservation {{ reservation_id }} has been successfully cancelled. The refund will be processed to your original payment methods within 5 to 7 business days."
+                else:
+                  steps:
+                    - id: inform_cancellation_cancelled
+                      action: reply
+                      message: "The cancellation has been cancelled. Your reservation remains active."
+          else:
+            steps:
+              - id: inform_cannot_cancel
+                action: reply
+                message: |
+                  I'm sorry, but your reservation cannot be cancelled at this time.
+                  
+                  Reservations can only be cancelled if at least one of the following conditions is met:
+                  - The booking was made within the last 24 hours
+                  - The flight status is cancelled
+                  - The cabin class is business
+                  - Travel insurance was purchased
+                  
+                  None of these conditions are currently met for your reservation.
+
+
+---
+workflow: Refund
+when: "user wants a refund or complains about their flight reservation"
+
+keywords:
+  - refund
+  - get refund
+  - request refund
+  - flight refund
+  - complain about flight
+  - flight complaint
+  - cancelled flight refund
+  - delayed flight refund
+
+examples:
+  - "I want a refund"
+  - "Can I get a refund for my flight?"
+  - "My flight was cancelled, I want a refund"
+  - "My flight was delayed, I want compensation"
+  - "I want to complain about my flight"
+
+steps:
+  # Step 1: Get user ID and reservation ID
+  - id: fetch_user_and_reservation
+    action: fetch
+    fields:
+      - user_id
+      - reservation_id
+  
+  # Step 2: Get user details to retrieve membership
+  - id: get_user_details
+    action: use_tool
+    tool_name: get_user_details
+    input: ["{{ user_id }}"]
+    set_variables:
+      - membership
+  
+  # Step 3: Get reservation details to get insurance and cabin
+  - id: get_reservation_details_initial
+    action: use_tool
+    tool_name: get_reservation_details
+    input: ["{{ reservation_id }}"]
+    set_variables:
+      - reservation_insurance
+      - reservation_cabin
+      - reservation_flights
+      - reservation_passengers
+  
+  # Step 4: Check if refund is allowed based on membership, insurance, and cabin
+  - id: check_refund_eligibility
+    action: conditional
+    condition:
+      operator: and
+      conditions:
+        - operator: eq
+          left: "{{ membership }}"
+          right: "regular"
+        - operator: eq
+          left: "{{ reservation_insurance }}"
+          right: "no"
+        - operator: eq
+          left: "{{ reservation_cabin }}"
+          right: "economy"
+    then:
+      steps:
+        - id: inform_refund_not_allowed
+          action: reply
+          message: "I'm sorry, but refunds are not allowed for regular members with economy cabin class and no travel insurance."
+    else:
+      steps:
+        # Step 5: Fetch the complaint
+        - id: fetch_complaint
+          action: fetch_with_message
+          field: complaint
+          message: |
+            Please describe your complaint or the reason for requesting a refund.
+            For example:
+            - Cancelled flights in the reservation
+            - Delayed flights and you want to change or cancel the reservation
+            - Other issues
+            
+            Please provide details about your complaint.
+        
+        # Step 6: Check if complaint is about cancelled flights
+        - id: check_cancelled_flight_complaint
+          action: conditional
+          condition:
+            operator: contains
+            left: "{{ complaint }}"
+            right: ["cancelled flight", "flight cancelled", "cancellation"]
+          then:
+            steps:
+              # Step 7: Extract flight numbers and dates from reservation
+              - id: extract_flight_info_for_cancelled
+                action: instruction
+                instruction: |
+                  Extract the flight numbers and dates from the reservation_flights.
+                  The reservation_flights is a list of ReservationFlight objects, each containing:
+                  - flight_number: The flight number (e.g., "HAT001")
+                  - date: The flight date in YYYY-MM-DD format
+                  
+                  Set the following variables:
+                  - flight_numbers: A list of all flight numbers from the reservation
+                  - flight_dates: A list of all flight dates from the reservation
+                set_variables:
+                  - flight_numbers
+                  - flight_dates
+              
+              # Step 8: Check if any flight was cancelled
+              - id: check_flight_cancelled_status
+                action: instruction
+                instruction: |
+                  For each flight in the reservation, check its status using get_flight_status tool.
+                  
+                  Steps:
+                  1. Iterate through flight_numbers and flight_dates (they should have the same length)
+                  2. For each pair (flight_number, date), call get_flight_status(flight_number, date)
+                  3. Collect all flight statuses in a list called flight_statuses
+                  4. Check if any flight status is "cancelled"
+                  5. If at least one flight has status "cancelled", set has_cancelled_flight to true, else false
+                  
+                  Available tools:
+                  - get_flight_status(flight_number: str, date: str) -> str
+                  
+                  The status can be: "available", "on time", "flying", "landed", "cancelled", or "delayed"
+                tools_available:
+                  - get_flight_status
+                set_variables:
+                  - flight_statuses
+                  - has_cancelled_flight
+              
+              # Step 9: Verify cancelled flight and send certificate
+              - id: verify_and_send_certificate_cancelled
+                action: conditional
+                condition:
+                  operator: eq
+                  left: "{{ has_cancelled_flight }}"
+                  right: true
+                then:
+                  steps:
+                    # Step 10: Calculate number of passengers
+                    - id: get_number_of_passengers
+                      action: instruction
+                      instruction: |
+                        Get the number of passengers from reservation_passengers.
+                        reservation_passengers is a list of Passenger objects.
+                        Set number_of_passengers to the length of this list.
+                      set_variable: number_of_passengers
+                    
+                    # Step 11: Calculate certificate amount (100 * number of passengers)
+                    - id: calculate_certificate_amount_cancelled
+                      action: use_tool
+                      tool_name: calculate
+                      input: ["100 * {{ number_of_passengers }}"]
+                      set_variable: certificate_amount
+                    
+                    # Step 12: Send certificate
+                    - id: send_certificate_cancelled
+                      action: use_tool
+                      tool_name: send_certificate
+                      input: ["{{ user_id }}", "{{ certificate_amount }}"]
+                    
+                    # Step 13: Confirm refund
+                    - id: confirm_refund_cancelled
+                      action: reply
+                      message: |
+                        I've verified that a flight in your reservation was cancelled. 
+                        I've sent a certificate for {{ certificate_amount }} dollars (100 dollars per passenger) to your account.
+                        The certificate has been added to your payment methods and can be used for future bookings.
+                else:
+                  steps:
+                    - id: inform_no_cancelled_flight
+                      action: reply
+                      message: "I checked your reservation and did not find any cancelled flights. Please verify your complaint or contact customer service for further assistance."
+          else:
+            steps:
+              # Step 14: Check if complaint is about delayed flights
+              - id: check_delayed_flight_complaint
+                action: conditional
+                condition:
+                  operator: contains
+                  left: "{{ complaint }}"
+                  right: ["delayed flight", "flight delayed", "delay"]
+                then:
+                  steps:
+                    # Step 15: Check if user wants to change or cancel
+                    - id: check_wants_change_or_cancel
+                      action: fetch_with_message
+                      field: wants_change_or_cancel
+                      message: |
+                        You mentioned a delayed flight. Would you like to change or cancel your reservation?
+                        Please respond with 'change', 'cancel', or 'no'.
+                    
+                    # Step 16: Check if user wants change or cancel
+                    - id: check_change_cancel_response
+                      action: conditional
+                      condition:
+                        operator: contains
+                        left: "{{ wants_change_or_cancel }}"
+                        right: ["change", "cancel"]
+                      then:
+                        steps:
+                          # Step 17: Extract flight numbers and dates from reservation
+                          - id: extract_flight_info_for_delayed
+                            action: instruction
+                            instruction: |
+                              Extract the flight numbers and dates from the reservation_flights.
+                              The reservation_flights is a list of ReservationFlight objects, each containing:
+                              - flight_number: The flight number (e.g., "HAT001")
+                              - date: The flight date in YYYY-MM-DD format
+                              
+                              Set the following variables:
+                              - flight_numbers: A list of all flight numbers from the reservation
+                              - flight_dates: A list of all flight dates from the reservation
+                            set_variables:
+                              - flight_numbers
+                              - flight_dates
+                          
+                          # Step 18: Check if any flight was delayed
+                          - id: check_flight_delayed_status
+                            action: instruction
+                            instruction: |
+                              For each flight in the reservation, check its status using get_flight_status tool.
+                              
+                              Steps:
+                              1. Iterate through flight_numbers and flight_dates (they should have the same length)
+                              2. For each pair (flight_number, date), call get_flight_status(flight_number, date)
+                              3. Collect all flight statuses in a list called flight_statuses
+                              4. Check if any flight status is "delayed"
+                              5. If at least one flight has status "delayed", set has_delayed_flight to true, else false
+                              
+                              Available tools:
+                              - get_flight_status(flight_number: str, date: str) -> str
+                              
+                              The status can be: "available", "on time", "flying", "landed", "cancelled", or "delayed"
+                            tools_available:
+                              - get_flight_status
+                            set_variables:
+                              - flight_statuses
+                              - has_delayed_flight
+                          
+                          # Step 19: Verify delayed flight and send certificate
+                          - id: verify_and_send_certificate_delayed
+                            action: conditional
+                            condition:
+                              operator: eq
+                              left: "{{ has_delayed_flight }}"
+                              right: true
+                            then:
+                              steps:
+                                # Step 20: Calculate number of passengers
+                                - id: get_number_of_passengers_delayed
+                                  action: instruction
+                                  instruction: |
+                                    Get the number of passengers from reservation_passengers.
+                                    reservation_passengers is a list of Passenger objects.
+                                    Set number_of_passengers to the length of this list.
+                                  set_variable: number_of_passengers
+                                
+                                # Step 21: Calculate certificate amount (50 * number of passengers)
+                                - id: calculate_certificate_amount_delayed
+                                  action: use_tool
+                                  tool_name: calculate
+                                  input: ["50 * {{ number_of_passengers }}"]
+                                  set_variable: certificate_amount
+                                
+                                # Step 22: Send certificate
+                                - id: send_certificate_delayed
+                                  action: use_tool
+                                  tool_name: send_certificate
+                                  input: ["{{ user_id }}", "{{ certificate_amount }}"]
+                                
+                                # Step 23: Confirm refund
+                                - id: confirm_refund_delayed
+                                  action: reply
+                                  message: |
+                                    I've verified that a flight in your reservation was delayed and you want to {{ wants_change_or_cancel }} your reservation.
+                                    I've sent a certificate for {{ certificate_amount }} dollars (50 dollars per passenger) to your account.
+                                    The certificate has been added to your payment methods and can be used for future bookings.
+                            else:
+                              steps:
+                                - id: inform_no_delayed_flight
+                                  action: reply
+                                  message: "I checked your reservation and did not find any delayed flights. Please verify your complaint or contact customer service for further assistance."
+                      else:
+                        steps:
+                          - id: inform_no_change_cancel
+                          action: reply
+                          message: "Since you don't want to change or cancel your reservation, I cannot process a refund for delayed flights. If you change your mind, please let me know."
+                else:
+                  steps:
+                    - id: inform_other_complaint
+                      action: reply
+                      message: |
+                        I understand your complaint. However, refunds are only available for:
+                        - Cancelled flights in the reservation
+                        - Delayed flights when you want to change or cancel your reservation
+                        
+                        For other issues, please contact customer service for assistance.

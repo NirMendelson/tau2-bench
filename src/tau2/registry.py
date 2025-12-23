@@ -249,3 +249,19 @@ try:
     )
 except Exception as e:
     logger.error(f"Error initializing registry: {str(e)}")
+
+# Register WorkflowAgent
+try:
+    import sys
+    import os
+    # Ensure current working directory is in path to find workflow_agent folder
+    if os.getcwd() not in sys.path:
+        sys.path.append(os.getcwd())
+        
+    from workflow_agent.main import WorkflowAgent
+    registry.register_agent(WorkflowAgent, "workflow_agent")
+    logger.debug("Registered workflow_agent successfully.")
+except ImportError as e:
+    logger.warning(f"Could not import WorkflowAgent for registration: {e}")
+except Exception as e:
+    logger.error(f"Error registering WorkflowAgent: {e}")
