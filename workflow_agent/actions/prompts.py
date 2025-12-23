@@ -104,26 +104,7 @@ def get_fetch_with_condition_prompt(field_name, condition, conv_text, tone_text)
     """
     Returns a prompt to extract a field and verify it meets a specific condition.
     """
-    # Format condition string if it's a dict
-    if isinstance(condition, dict):
-        op = condition.get('operator')
-        left = condition.get('left')
-        right = condition.get('right')
-        
-        # Map operator to symbol
-        op_map = {
-            'eq': '=', 'equal': '=', 'equals': '=', 
-            'gt': '>', 'greater_than': '>',
-            'lt': '<', 'less_than': '<',
-            'gte': '>=', 'greater_equal': '>=',
-            'lte': '<=', 'less_equal': '<=',
-            'neq': '!=', 'not_equal': '!='
-        }
-        op_sym = op_map.get(str(op).lower(), str(op))
-        
-        condition_str = f"{left} {op_sym} {right}"
-    else:
-        condition_str = str(condition)
+    condition_str = str(condition)
 
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. 
 
@@ -281,37 +262,7 @@ def get_condition_eval_prompt(condition, field_info, conv_text):
     """
     Returns a prompt to evaluate a complex condition based on memory variables.
     """
-    def _format_condition(cond):
-        if not isinstance(cond, dict):
-            return str(cond)
-            
-        op = cond.get('operator')
-        
-        # Handle nested conditions
-        if 'conditions' in cond:
-            sub_conds = [_format_condition(c) for c in cond.get('conditions', [])]
-            joiner = " AND " if op == 'and' else " OR "
-            return f"({joiner.join(sub_conds)})"
-        
-        # Handle simple comparison
-        left = cond.get('left')
-        right = cond.get('right')
-        
-        # Map operator to symbol
-        op_map = {
-            'eq': '=', 'equal': '=', 'equals': '=', 
-            'gt': '>', 'greater_than': '>',
-            'lt': '<', 'less_than': '<',
-            'gte': '>=', 'greater_equal': '>=',
-            'lte': '<=', 'less_equal': '<=',
-            'neq': '!=', 'not_equal': '!',
-            'contains': 'contains'
-        }
-        op_sym = op_map.get(str(op).lower(), str(op))
-        
-        return f"{left} {op_sym} {right}"
-
-    condition_str = _format_condition(condition)
+    condition_str = str(condition)
 
     return f"""You are an intelligence agent. Evaluate this condition based on the field value and conversation context.
 
