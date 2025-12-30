@@ -3,6 +3,8 @@ import litellm
 import os
 from loguru import logger
 from ..actions import prompts
+import re
+
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
@@ -61,7 +63,7 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
         prompt = prompts.get_fetch_multi_prompt(target_fields, conv_text, tone_text)
     
     if DEBUG_MODE:
-        print("--- Get Workflow Prompt ---")
+        print("--- Fetch Prompt ---")
         print(prompt)
         print("--------------------------------")
 
@@ -135,10 +137,11 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
 def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_model):
     """
     Checks if field exists and satisfies condition. If not, asks user or re-fetches.
+    Conditions are in natural language format like "{variable} = value" or "{variable} <= 5".
     """
     field = step.get('field')
     condition = step.get('condition')
-    # Pass the condition object directly to the prompt generator
+    # Condition is now in natural language format (string) like "{variable} = value"
     
     # Check memory first
     val = memory.get_variable(field)
@@ -147,7 +150,7 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
     prompt = prompts.get_fetch_with_condition_prompt(field, condition, conv_text, tone_text)
     
     if DEBUG_MODE:
-        print("--- Get Workflow Prompt ---")
+        print("--- Fetch with Condition Prompt ---")
         print(prompt)
         print("--------------------------------")
 
@@ -220,7 +223,7 @@ def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
     prompt = prompts.get_fetch_with_message_prompt(target_fields, resolved_message, conv_text, tone_text)
     
     if DEBUG_MODE:
-        print("--- Get Workflow Prompt ---")
+        print("--- Fetch with Message Prompt ---")
         print(prompt)
         print("--------------------------------")
     
@@ -292,7 +295,34 @@ def execute_reply(step, memory, conversation, tone_text, llm_model):
     prompt = prompts.get_reply_prompt(resolved_message, tone_text, conv_text)
     
     if DEBUG_MODE:
-        print("--- Get Workflow Prompt ---")
+        print("--- Reply Prompt ---")
+        print(prompt)
+        print("--------------------------------")
+
+    response = litellm.completion(
+        model=llm_model,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    final_message = response.choices[0].message.content.strip()
+
+    if DEBUG_MODE:
+        print("---agent output---")
+        print(final_message)
+    return StepExecutionResult("blocking", message=final_message)
+
+def execute_reply_exact_message(step, memory, conversation, tone_text, llm_model):
+    """
+    Sends a message to the user based on the reply_exact_message action.
+    """
+    message_template = step.get('message')
+    resolved_message = memory.resolve_templates(message_template)
+    
+    conv_text = memory.get_history_as_text()
+    prompt = prompts.get_reply_exact_message_prompt(resolved_message, tone_text, conv_text)
+    
+    if DEBUG_MODE:
+        print("--- Reply Exact Message Prompt ---")
         print(prompt)
         print("--------------------------------")
 
@@ -336,65 +366,129 @@ def execute_set_variable(step, memory):
 def execute_condition(step, memory, conversation, tone_text, llm_model):
     """
     Evaluates a condition and determines which steps to follow next.
+    Conditions are now in natural language format like "{variable} = value" or "{variable} <= 5".
     """
     condition = step.get('condition')
-    # Use LLM to evaluate complex conditions if needed
-    # The condition object has 'operator', 'left', 'right' usually
     
-    operator = condition.get('operator')
-    left = condition.get('left')
-    right = condition.get('right')
-    
-    # Resolve templates
-    left_val = memory.resolve_templates(left) if isinstance(left, str) else left
-    right_val = memory.resolve_templates(right) if isinstance(right, str) else right
-    
-    is_true = False
-    
-    # Simple operators we can handle in Python
-    if operator == 'eq':
-        if isinstance(right, list): # Check if list
-            is_true = left_val in right # Check if in list
-        else:
-            is_true = str(left_val) == str(right_val)
-    elif operator == 'gt':
-        try:
-            is_true = float(left_val) > float(right_val)
-        except: is_true = False
-    elif operator == 'gte':
-        try:
-            is_true = float(left_val) >= float(right_val)
-        except: is_true = False
-    elif operator == 'lt':
-        try:
-            is_true = float(left_val) < float(right_val)
-        except: is_true = False
-    elif operator == 'lte' or operator == 'less_equal':
-        try:
-            is_true = float(left_val) <= float(right_val)
-        except: is_true = False
-    elif operator == 'contains':
-        is_true = str(right_val) in str(left_val)
+    # Conditions are now in natural language format (string)
+    # Resolve any template variables in the condition string
+    if isinstance(condition, str):
+        condition_str = memory.resolve_templates(condition)
     else:
-        # Fallback to LLM for complex/unknown operators
-        conv_text = memory.get_history_as_text()
-        prompt = prompts.get_condition_eval_prompt(condition, str(memory.variables), conv_text)
+        # Fallback: if condition is still an object (old format), convert to string
+        condition_str = str(condition)
+    
+    # Use LLM to evaluate the natural language condition
+    conv_text = memory.get_history_as_text()
+    prompt = prompts.get_condition_eval_prompt(condition_str, str(memory.variables), conv_text)
+    
+    if DEBUG_MODE:
+        print("--- Condition Prompt ---")
+        print(prompt)
+        print("--------------------------------")
         
-        if DEBUG_MODE:
-            print("--- Get Workflow Prompt ---")
-            print(prompt)
-            print("--------------------------------")
-            
-        response = litellm.completion(model=llm_model, messages=[{"role": "user", "content": prompt}])
-        content = response.choices[0].message.content.strip()
+    response = litellm.completion(model=llm_model, messages=[{"role": "user", "content": prompt}])
+    content = response.choices[0].message.content.strip()
+    
+    if DEBUG_MODE:
+        print("---agent output---")
+        print(content)
         
-        if DEBUG_MODE:
-            print("---agent output---")
-            print(content)
-            
-        is_true = content.lower() == 'true'
-        
+    is_true = content.lower() == 'true'
+    
     return StepExecutionResult("completed", result={"condition": is_true})
+
+def execute_conditional_with_message(step, memory, conversation, tone_text, llm_model):
+    """
+    Evaluates a condition and sends a message if specified for the result.
+    Re-evaluates on each cycle until condition result matches a branch with no message.
+    
+    Supports:
+    - message_on_true: message to send when condition is true
+    - message_on_false: message to send when condition is false
+    
+    If a message exists for the current condition result, sends it and blocks.
+    If no message exists for the current condition result, completes and continues.
+    
+    Uses a single LLM call to evaluate the condition and generate the message if needed.
+    """
+    condition = step.get('condition')
+    
+    # Resolve any template variables in the condition string
+    if isinstance(condition, str):
+        condition_str = memory.resolve_templates(condition)
+    else:
+        # Fallback: if condition is still an object (old format), convert to string
+        condition_str = str(condition)
+    
+    # Resolve templates in message templates if they exist
+    message_on_true = step.get('message_on_true')
+    message_on_false = step.get('message_on_false')
+    if message_on_true:
+        message_on_true = memory.resolve_templates(message_on_true)
+    if message_on_false:
+        message_on_false = memory.resolve_templates(message_on_false)
+    
+    # Use LLM to evaluate the condition and generate message in one call
+    conv_text = memory.get_history_as_text()
+    prompt = prompts.get_conditional_with_message_prompt(
+        condition_str, 
+        str(memory.variables), 
+        conv_text,
+        tone_text,
+        message_on_true=message_on_true,
+        message_on_false=message_on_false
+    )
+    
+    if DEBUG_MODE:
+        print("--- Conditional with Message Prompt ---")
+        print(prompt)
+        print("--------------------------------")
+        
+    response = litellm.completion(model=llm_model, messages=[{"role": "user", "content": prompt}])
+    content = response.choices[0].message.content.strip()
+    
+    if DEBUG_MODE:
+        print("---agent output---")
+        print(content)
+        print("--------------------------------")
+    
+    # Parse YAML response
+    try:
+        import yaml
+        cleaned_content = clean_json_response(content)
+        result = yaml.safe_load(cleaned_content)
+        
+        if not result or 'condition_result' not in result:
+            logger.error(f"invalid response format from conditional_with_message: {content}")
+            return StepExecutionResult("failed", message="Failed to parse condition evaluation.")
+        
+        condition_result = result.get('condition_result')
+        if isinstance(condition_result, str):
+            is_true = condition_result.lower() == 'true'
+        else:
+            is_true = bool(condition_result)
+        
+        message = result.get('message')
+        
+        # If message was generated, send it and block
+        if message and message.strip() and message.lower() != 'null':
+            if DEBUG_MODE:
+                logger.info(f"conditional_with_message: condition is {is_true}, message generated, blocking")
+            
+            # Return blocking - step will be re-executed on next cycle
+            # The orchestrator will keep the step at the same index when blocking
+            return StepExecutionResult("blocking", message=message.strip(), result={"condition": is_true})
+        
+        # No message for this condition result - we're done, continue to next step
+        if DEBUG_MODE:
+            logger.info(f"conditional_with_message: condition is {is_true}, no message needed, continuing to next step")
+        
+        return StepExecutionResult("completed", result={"condition": is_true})
+        
+    except Exception as e:
+        logger.error(f"error parsing conditional_with_message response: {e}")
+        return StepExecutionResult("failed", message="Failed to parse condition evaluation.")
 
 def execute_use_tool(step, memory, tools):
     """
@@ -453,36 +547,67 @@ def execute_use_tool(step, memory, tools):
     try:
         if input_list is not None:
             # Use input list (workflow syntax)
+            logger.info(f"calling tool {tool_name} with input_list: {input_list}")
             result = tools.execute(tool_name, input_list=input_list)
         elif kwargs:
             # Use keyword arguments
+            logger.info(f"calling tool {tool_name} with kwargs: {kwargs}")
             result = tools.execute(tool_name, **kwargs)
         else:
             # No arguments provided
+            logger.info(f"calling tool {tool_name} with no arguments")
             result = tools.execute(tool_name, input_list=[])
+        logger.info(f"tool {tool_name} returned: {result} (type: {type(result)})")
     except Exception as e:
         logger.error(f"tool call {tool_name} failed: {e}")
         return StepExecutionResult("failed", message=str(e))
     
     # Handle set_variables mapping
-    # "set_variables": ["var1", "var2"] -> map from result object attributes or dict keys
+    # Supports multiple formats:
+    # - List format: ["var1", "var2"] -> map from result.var1 to var1, result.var2 to var2
+    # - Dict format: {"new_name": "old_name"} -> map from result.old_name to new_name
+    # - Mixed: ["var1", {"new_name": "old_name"}] -> supports both formats
     set_vars = step.get('set_variables', [])
     if set_vars:
         # If set_variables is specified, only store the extracted variables (not the full result)
         # result can be Object or Dict
-        for var_name in set_vars:
-            val = None
+        
+        # Helper function to extract value from result
+        def get_value_from_result(source_name):
             if isinstance(result, dict):
-                val = result.get(var_name)
-            elif hasattr(result, var_name):
-                val = getattr(result, var_name)
-            
-            if val is not None:
-                memory.set_variable(var_name, val)
+                return result.get(source_name)
+            elif hasattr(result, source_name):
+                return getattr(result, source_name)
+            return None
+        
+        # Handle set_vars - can be a list or a dict
+        if isinstance(set_vars, dict):
+            # Dict format: {"new_name": "old_name"}
+            for new_name, old_name in set_vars.items():
+                val = get_value_from_result(old_name)
+                if val is not None:
+                    memory.set_variable(new_name, val)
+        else:
+            # List format: ["var1", "var2"] or [{"new_name": "old_name"}]
+            for item in set_vars:
+                if isinstance(item, dict):
+                    # Dictionary mapping: {"new_name": "old_name"}
+                    for new_name, old_name in item.items():
+                        val = get_value_from_result(old_name)
+                        if val is not None:
+                            memory.set_variable(new_name, val)
+                else:
+                    # String: direct mapping from result.var_name to var_name
+                    var_name = item
+                    val = get_value_from_result(var_name)
+                    if val is not None:
+                        memory.set_variable(var_name, val)
     else:
         # If set_variables is not specified, store the full result
         # Default: {tool_name}_result
-        memory.set_variable(f"{tool_name}_result", result)
+        result_var_name = f"{tool_name}_result"
+        logger.info(f"storing tool result in {result_var_name}: {result} (type: {type(result)})")
+        memory.set_variable(result_var_name, result)
                 
     return StepExecutionResult("completed")
 
@@ -544,7 +669,24 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools)
     try:
         # Parse YAML response
         import yaml
-        result = yaml.safe_load(content)
+        try:
+            result = yaml.safe_load(content)
+        except Exception:
+            # Option 3: Fallback "dumb" parser if YAML fails (e.g., due to unquoted colons in values)
+            result = {}
+            for key in ['result', 'reasoning']:
+                # Capture everything after the key until the next key or end of string
+                match = re.search(fr'{key}:\s*(.*?)(?=\n\s*(?:result|reasoning)\s*:|$)', content, re.DOTALL | re.IGNORECASE)
+                if match:
+                    val = match.group(1).strip()
+                    # Strip colons from the value as requested by the user
+                    val = val.replace(':', '')
+                    
+                    if key == 'result':
+                        if val.lower() == 'false': val = False
+                        elif val.lower() == 'true': val = True
+                        elif val.lower() == 'null': val = None
+                    result[key] = val
         
         # Extract the result value
         result_value = result.get('result')
@@ -585,10 +727,14 @@ def execute_step(step, memory, conversation, tone_text, llm_model, tools):
         return execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
     elif action == 'reply':
         return execute_reply(step, memory, conversation, tone_text, llm_model)
+    elif action == 'reply_exact_message':
+        return execute_reply_exact_message(step, memory, conversation, tone_text, llm_model)
     elif action == 'set_variable':
         return execute_set_variable(step, memory)
     elif action == 'conditional' or action == 'condition':
         return execute_condition(step, memory, conversation, tone_text, llm_model)
+    elif action == 'conditional_with_message':
+        return execute_conditional_with_message(step, memory, conversation, tone_text, llm_model)
     elif action == 'use_tool':
         return execute_use_tool(step, memory, tools)
     elif action == 'instruction':
@@ -626,9 +772,11 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools):
         if items is None and isinstance(loop_over_var, str) and "{{" in loop_over_var:
              items = memory.resolve_templates(loop_over_var)
 
-    if not isinstance(items, list):
-         logger.warning(f"Loop target {loop_over_var} is not a list: {items}")
+    if not isinstance(items, (list, tuple)):
+         logger.warning(f"Loop target {loop_over_var} is not a list/tuple: {items}")
          items = []
+
+    logger.info(f"loop starting: iterating over {len(items)} items, loop_over={loop_over_var}, set_variable={set_variable_name}")
 
     results = []
     original_val = memory.get_variable(loop_variable_name)
@@ -655,13 +803,33 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools):
              
              if sub_set_vars:
                  # Collect specific extracted variables into a dictionary
+                 # Handle both list format ["var1"] and dict format {"new_name": "old_name"}
                  item_result = {}
-                 for var_name in sub_set_vars:
+                 
+                 # Extract target variable names (keys for dict format, values for list format)
+                 if isinstance(sub_set_vars, dict):
+                     # Dict format: {"new_name": "old_name"} - collect new_name
+                     target_vars = list(sub_set_vars.keys())
+                 else:
+                     # List format: ["var1", "var2"] or [{"new_name": "old_name"}]
+                     target_vars = []
+                     for item in sub_set_vars:
+                         if isinstance(item, dict):
+                             # Dictionary mapping: {"new_name": "old_name"} - collect new_name
+                             target_vars.extend(item.keys())
+                         else:
+                             # String: direct variable name
+                             target_vars.append(item)
+                 
+                 for var_name in target_vars:
                      item_result[var_name] = memory.get_variable(var_name)
+                 logger.info(f"loop collected item result (with set_variables): {item_result}")
                  results.append(item_result)
              else:
                  # Default: collect the full result object
-                 val = memory.get_variable(f"{sub_tool_name}_result")
+                 result_var_name = f"{sub_tool_name}_result"
+                 val = memory.get_variable(result_var_name)
+                 logger.info(f"loop collected tool result: {result_var_name}={val} (type: {type(val)})")
                  results.append(val)
                  
              # Clear the tool result for next iteration to prevent stale data if next call fails
@@ -689,6 +857,7 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools):
         memory.set_variable(loop_variable_name, original_val)
         
     # Store aggregated results
+    logger.info(f"loop completed: collected {len(results)} results, storing in {set_variable_name}")
     memory.set_variable(set_variable_name, results)
     
     return StepExecutionResult("completed")

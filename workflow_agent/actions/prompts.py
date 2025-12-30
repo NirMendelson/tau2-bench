@@ -103,8 +103,13 @@ def get_fetch_prompt(field_name, conv_text, tone_text):
 def get_fetch_with_condition_prompt(field_name, condition, conv_text, tone_text):
     """
     Returns a prompt to extract a field and verify it meets a specific condition.
+    Conditions are in natural language format like "{variable} = value" or "{variable} <= 5".
     """
-    condition_str = str(condition)
+    # Condition is now a natural language string
+    if isinstance(condition, str):
+        condition_str = condition
+    else:
+        condition_str = str(condition)
 
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. 
 
@@ -128,16 +133,19 @@ EXAMPLES OF INFERENCE:
 - "The landlord raised the price again." → They're renting (not owning).
 - "I'm not been able to enter the YouTube app, and the rest of my apps work fine." → They have a problem with the YouTube app and its not a WIFI or hardware issue, because the rest work well.
 
-TASK 2: EVALUATE CONDITION (only if field is found)
-If you found the field '{field_name}' in TASK 1, now evaluate this condition: {condition_str}
-do not give weight to syntax, only to meaning.
+TASK 2: EVALUATE CONDITION
+Evaluate this natural language condition: {condition_str}
+Do not give weight to syntax, only to meaning.
 
 IMPORTANT INSTRUCTIONS FOR CONDITION EVALUATION:
-- The condition "{condition_str}" may reference the field '{field_name}' that you just extracted.
 - Use the actual value you extracted for '{field_name}' in TASK 1 when evaluating the condition.
 - If the condition contains "{{{{ {field_name} }}}}", replace it with the value you found.
 - Use your intelligence to determine if the condition is true or false, don't do a simple string comparison.
-- Examples: California = CA is true, yes = yeah = I think so = any other phrase with basic meaning of yes
+- Examples: 
+  * "{{number_of_passengers}} <= 5" means check if the number of passengers is less than or equal to 5
+  * "{{flight_preference}} = direct only" means check if flight preference equals "direct only"
+  * "{{complaint}} contains cancelled flight" means check if the complaint text contains the phrase "cancelled flight"
+  * California = CA is true, yes = yeah = I think so = any other phrase with basic meaning of yes
 
 Conversation:
 {conv_text}
@@ -211,7 +219,7 @@ def get_reply_prompt(message_template, tone_text, conversation_context):
     """
     Returns a prompt to generate a natural language reply based on a template message.
     """
-    return f"""You need to tell the user this reply message: {message_template}
+    return f"""here is your instruction for how to reply: {message_template}
 
 Generate the response using the tone below:
 {tone_text}
@@ -220,33 +228,60 @@ Read the conversation history to answer correctly in context:
 {conversation_context}
 
 CRITICAL:
-- Keep the reply message as is, don't change it.
-- Do not change the reply message, just apply the tone and make the message fit the conversation history.
+- You have to fit the message to the conversation history, make sure the message is relevant to the conversation history.
+- Make sure you do not repeat yourself, make sure you talk in this conversation like a human would.
 - Apply the tone and make the message fit the conversation history. 
+
+Return ONLY the reply message, nothing else."""
+
+def get_reply_exact_message_prompt(message_template, tone_text, conversation_context):
+    """
+    Returns a prompt to generate a natural language reply based on a template message.
+    """
+    return f"""You need to tell the user this reply message: {message_template}
+
+Read the conversation history to answer correctly in context:
+{conversation_context}
+
+CRITICAL:
+- You can fit the message to the conversation, but try as much as possible to keep the reply message as is, don't change it.
+- Do not change the reply message, just apply the tone and make the message fit the conversation history.
 - Don't add information that is not in the reply message.
 - Don't leave out any information that is in the reply message.
 Return ONLY the reply message, nothing else."""
 
-def get_workflow_selection_prompt(conversation, last_message, candidate_workflows, tone_text):
+def get_workflow_selection_prompt(conversation, last_message, candidate_workflows, tone_text, current_workflow_name=None):
     """
     Returns a prompt for the LLM to choose the best workflow from multiple high-scoring candidates.
+    
+    Args:
+        conversation: Conversation history text
+        last_message: Latest user message
+        candidate_workflows: List of candidate workflow dicts
+        tone_text: Tone guidelines
+        current_workflow_name: Name of the current workflow being executed (None for first step)
     """
     workflows_text = "\n\n".join([f"Workflow: {w['workflow']}\nDescription: {w['when']}" for w in candidate_workflows])
     
-    return f"""You are an intelligence agent. Multiple workflows match the user's intent. You need to evaluate and score each one.
+    current_workflow_info = ""
+    if current_workflow_name:
+        current_workflow_info = f"\nCurrently we are executing the workflow: {current_workflow_name}You need to infer from the conversation history and last message if we should stay with this workflow or switch to a different one."
+    
+    return f"""You are an intelligence agent. Your job is to choose the workflow that best fits the user's intent so that we will answer correctly in the rest of the conversation.
 
 LATEST USER MESSAGE (this is the most important):
 {last_message}
 
-TASK: Score each candidate workflow based on how well it matches the user's intent expressed in the latest message above. Score each workflow from 0.0 to 1.0, where 1.0 is a perfect match.
-
 CONVERSATION HISTORY (for context only):
 {conversation}
 
-IMPORTANT: While the conversation history provides context, the LATEST USER MESSAGE shown above is the primary source of intent. Give it the most weight when scoring workflows.
+{current_workflow_info}
 
-Candidate workflows:
+Here are the candidate workflows, field "when" mention when to use this workflow:
+TASK: Score each candidate workflow based on how well it matches the user's intent expressed in the latest message and in the conversation history. Score each workflow from 0.0 to 1.0, where 1.0 is a perfect match.
 {workflows_text}
+
+Important: if there is no intent change, and it just answer the question, then you should stay with the current workflow.
 
 Respond in YAML format with workflow name and score for each candidate:
 ```yaml
@@ -260,15 +295,21 @@ workflows:
 
 def get_condition_eval_prompt(condition, field_info, conv_text):
     """
-    Returns a prompt to evaluate a complex condition based on memory variables.
+    Returns a prompt to evaluate a natural language condition based on memory variables.
+    Conditions are in natural language format like "{variable} = value" or "{variable} <= 5".
     """
-    condition_str = str(condition)
+    # Condition is now a natural language string
+    if isinstance(condition, str):
+        condition_str = condition
+    else:
+        condition_str = str(condition)
 
-    return f"""You are an intelligence agent. Evaluate this condition based on the field value and conversation context.
-
-{field_info}
+    return f"""You are an intelligence agent. Evaluate this natural language condition based on the field values and conversation context.
 
 Condition to evaluate: {condition_str}
+
+Available variables:
+{field_info}
 
 Conversation history (for context):
 {conv_text}
@@ -276,11 +317,75 @@ Conversation history (for context):
 TASK: Determine if the condition "{condition_str}" is true or false.
 
 CRITICAL: Use your intelligence to determine if the condition is true or false, don't do a simple string comparison.
-- California = CA is true
-- yes = yeah = I think so = any other phrase with basic meaning of yes
-
+- Replace variables in curly braces (e.g., "{{{{variable}}}}") with their actual values from the available variables above
+- Examples of condition formats:
+  * "{{number_of_passengers}} <= 5" means check if number_of_passengers is less than or equal to 5
+  * "{{flight_preference}} = direct only" means check if flight_preference equals "direct only"
+  * "{{complaint}} contains cancelled flight" means check if complaint text contains "cancelled flight"
+  * "{{membership}} = regular and {{reservation_insurance}} = no" means both conditions must be true
+- Semantic matching: California = CA is true, yes = yeah = I think so = any other phrase with basic meaning of yes
 
 Evaluate the condition and return ONLY "true" or "false" (lowercase, no quotes, no explanation)."""
+
+def get_conditional_with_message_prompt(condition, field_info, conv_text, tone_text, message_on_true=None, message_on_false=None):
+    """
+    Returns a prompt to evaluate a condition and generate a message if needed for conditional_with_message action.
+    This combines condition evaluation and message generation into a single LLM call.
+    """
+    if isinstance(condition, str):
+        condition_str = condition
+    else:
+        condition_str = str(condition)
+    
+    message_info = ""
+    if message_on_true:
+        message_info += f"\n- If condition is TRUE, you must generate and send this message: {message_on_true}"
+    if message_on_false:
+        message_info += f"\n- If condition is FALSE, you must generate and send this message: {message_on_false}"
+    if not message_info:
+        message_info = "\n- No messages configured for this condition. If condition matches a branch with no message, continue to next step."
+    
+    return f"""You are an intelligence agent. Evaluate this natural language condition based on the field values and conversation context.
+
+This is part of a conditional_with_message action that will re-evaluate the condition after each user response until the condition result matches a branch with no message configured.{message_info}
+
+Condition to evaluate: {condition_str}
+
+Available variables:
+{field_info}
+
+Conversation history (for context):
+{conv_text}
+
+TONE GUIDELINES (use when generating messages):
+{tone_text}
+
+TASK:
+1. Evaluate the condition "{condition_str}" and determine if it is true or false.
+2. If a message is configured for the condition result (true or false), generate that message following the tone guidelines and conversation context.
+3. If no message is configured for the condition result, indicate that execution should continue to the next step.
+
+CRITICAL FOR CONDITION EVALUATION:
+- Use your intelligence to determine if the condition is true or false, don't do a simple string comparison.
+- Replace variables in curly braces (e.g., "{{{{variable}}}}") with their actual values from the available variables above
+- Examples of condition formats:
+  * "{{{{number_of_passengers}}}} <= 5" means check if number_of_passengers is less than or equal to 5
+  * "{{{{flight_preference}}}} = direct only" means check if flight_preference equals "direct only"
+  * "{{{{complaint}}}} contains cancelled flight" means check if complaint text contains "cancelled flight"
+  * "{{{{membership}}}} = regular and {{{{reservation_insurance}}}} = no" means both conditions must be true
+- Semantic matching: California = CA is true, yes = yeah = I think so = any other phrase with basic meaning of yes
+
+CRITICAL FOR MESSAGE GENERATION (if message is needed):
+- Fit the message to the conversation history, make sure the message is relevant to the conversation history.
+- Make sure you do not repeat yourself, make sure you talk in this conversation like a human would.
+- Apply the tone and make the message fit the conversation history.
+- The message should be natural and contextual, not just a template.
+
+Respond in YAML format:
+```yaml
+condition_result: true/false
+message: <generated message if message is configured for this condition result, null if no message needed>
+```"""
 
 def get_instruction_prompt(instruction_text, tools_available, memory_variables, conversation_context, tone_text):
     """

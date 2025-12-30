@@ -33,11 +33,18 @@ def filter_workflows(workflows_with_scores, min_score):
     return {wf: score for wf, score in workflows_with_scores.items() if score > min_score}
 
 
-def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_model):
+def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_model, current_workflow_name=None):
     """
     Calls an LLM to decide between multiple workflows.
     candidate_workflows is a list of workflow dicts (full objects).
     Returns the workflow name with the highest score.
+    
+    Args:
+        conversation: Conversation history (list of message dicts)
+        candidate_workflows: List of workflow dicts (full objects)
+        tone_text: Tone guidelines
+        llm_model: LLM model to use
+        current_workflow_name: Name of the current workflow being executed (None for first step)
     """
     # Extract last user message
     last_message = ""
@@ -52,12 +59,10 @@ def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_
     history_without_last = [msg for msg in history_slice if not (msg['role'] == 'user' and msg['content'] == last_message)]
     conv_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history_without_last])
     
-    prompt = prompts.get_workflow_selection_prompt(conv_text, last_message, candidate_workflows, tone_text)
+    prompt = prompts.get_workflow_selection_prompt(conv_text, last_message, candidate_workflows, tone_text, current_workflow_name)
 
     if DEBUG_MODE:
-        print("--- Get Workflow Prompt ---")
-        print(prompt)
-        print("--------------------------------")
+        print("")
 
     response = litellm.completion(
         model=llm_model,
@@ -67,6 +72,7 @@ def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_
     response_text = response.choices[0].message.content.strip()
 
     if DEBUG_MODE:
+        print("")
         print("---agent yaml output---")
         print(response_text)
     
@@ -101,6 +107,7 @@ def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_
                 return best_workflow
     except (yaml.YAMLError, ValueError, KeyError, TypeError) as e:
         if DEBUG_MODE:
+            print("")
             print(f"WARNING: failed to parse YAML response, falling back to text extraction: {e}")
     
     # Fallback: try to extract workflow name from text if YAML parsing failed
@@ -117,10 +124,18 @@ def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_
     return None
 
 
-def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0.51):
+def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0, current_workflow_name=None):
     """
     Orchestrates the full matching process: BM25, Semantic, Filter, and Conflict Resolution.
     Returns the selected workflow object (not just ID) or None.
+    
+    Args:
+        conversation: Conversation history (list of message dicts)
+        workflows: List of workflow objects
+        tone_text: Tone guidelines
+        llm_model: LLM model to use
+        min_score: Minimum score threshold for workflow matching
+        current_workflow_name: Name of the current workflow being executed (None for first step)
     """
     # 1. Extract query (last user message)
     # We really only care about the latest user message for the search query, 
@@ -145,6 +160,7 @@ def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0.51
     
     if DEBUG_MODE:
         # Log detailed scores for all workflows
+        print("")
         print("--- Workflow Matching Scoring ---")
         all_workflow_names = sorted(set(bm25_scores.keys()) | set(semantic_scores.keys()) | set(combined.keys()))
         for wf_name in all_workflow_names:
@@ -165,14 +181,26 @@ def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0.51
     if len(passed_threshold) == 1:
         # Exactly one match > threshold
         wf_name = list(passed_threshold.keys())[0]
-        if DEBUG_MODE:
-            print(f"single match above threshold, selected workflow: {wf_name}")
-        return next((w for w in workflows if w['workflow'] == wf_name), None)
+        # Special case: if HandleGenericMessage is the only match, return it directly
+        # Otherwise, we need to include HandleGenericMessage in LLM selection
+        if wf_name == "HandleGenericMessage":
+            if DEBUG_MODE:
+                print("")
+                print(f"single match above threshold, selected workflow: {wf_name}")
+            return next((w for w in workflows if w['workflow'] == wf_name), None)
+        else:
+            # Even with one match, we need to let LLM choose between it and HandleGenericMessage
+            if DEBUG_MODE:
+                print("")
+                print(f"single match above threshold, but including HandleGenericMessage for LLM selection")
+            candidate_names = [wf_name]
+            candidates = [w for w in workflows if w['workflow'] in candidate_names]
         
     elif len(passed_threshold) > 1:
         # Multiple matches > threshold -> LLM decides
         if DEBUG_MODE:
-             print(f"multiple matches above threshold: {list(passed_threshold.keys())}")
+            print("")
+            print(f"multiple matches above threshold: {list(passed_threshold.keys())}")
         candidate_names = list(passed_threshold.keys())
         candidates = [w for w in workflows if w['workflow'] in candidate_names]
         
@@ -187,12 +215,21 @@ def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0.51
         # Only consider them if they have a non-zero score? 
         # The prompt will handle "none of these" if we allow it, but requirement says "highest scoring one gets selected"
         candidates = [w for w in workflows if w['workflow'] in candidate_names]
+    
+    # Ensure HandleGenericMessage is always included in candidates for LLM selection
+    handle_generic_workflow = next((w for w in workflows if w['workflow'] == "HandleGenericMessage"), None)
+    if handle_generic_workflow:
+        # Check if it's already in candidates
+        if not any(c['workflow'] == "HandleGenericMessage" for c in candidates):
+            candidates.append(handle_generic_workflow)
+
         
     # Call LLM for conflict resolution or top-5 selection
     if candidates:
-        selected_name = resolve_workflow_conflict(conversation, candidates, tone_text, llm_model)
+        selected_name = resolve_workflow_conflict(conversation, candidates, tone_text, llm_model, current_workflow_name)
         
         if DEBUG_MODE:
+            print("")
             print(f"LLM selected workflow: {selected_name}")
         
         # Find the workflow object

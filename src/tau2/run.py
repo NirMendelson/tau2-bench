@@ -222,7 +222,7 @@ def run_tasks(
         save_to = Path(save_to)
     # Set log level from config
     logger.remove()
-    logger.add(lambda msg: print(msg), level=log_level)
+    logger.add(lambda msg: print(msg, end=""), format="{message}\n", level=log_level)
     if len(tasks) == 0:
         raise ValueError("No tasks to run")
     if num_trials <= 0:

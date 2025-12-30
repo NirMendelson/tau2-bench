@@ -29,7 +29,8 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
         memory.get_history(), 
         candidate_workflows, 
         tone_text, 
-        llm_model
+        llm_model,
+        current_workflow_name=memory.workflow_name
     )
     
     # Logic: 
@@ -120,14 +121,14 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
                     # Looking at YAML: 
                     # `then: steps: [...]` (lines 51, 82)
                     # `then: id: ...` (single step object, line 126)
-                    then_block = current_step.get('then', {})
+                    then_block = current_step.get('then') or {}
                     if 'steps' in then_block:
                         branch_steps = then_block['steps']
                     elif 'id' in then_block or 'action' in then_block:
                         branch_steps = [then_block]
                 else:
                     # 'else' branch
-                    else_block = current_step.get('else', {})
+                    else_block = current_step.get('else') or {}
                     if 'steps' in else_block:
                         branch_steps = else_block['steps']
                     elif 'id' in else_block or 'action' in else_block:
