@@ -52,15 +52,21 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
     # Get conversation text
     conv_text = memory.get_history_as_text()
     
+    # Format memory info for prompts
+    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    
+    # Get comment if provided
+    comment = step.get('comment')
+    
     # Determine if single or multiple fields and call appropriate prompt
     is_single_field = len(target_fields) == 1
     
     if is_single_field:
         # Single field - use single field prompt
-        prompt = prompts.get_fetch_single_prompt(target_fields[0], conv_text, tone_text)
+        prompt = prompts.get_fetch_single_prompt(target_fields[0], conv_text, tone_text, memory_info, comment)
     else:
         # Multiple fields - use multi-field prompt to check all at once
-        prompt = prompts.get_fetch_multi_prompt(target_fields, conv_text, tone_text)
+        prompt = prompts.get_fetch_multi_prompt(target_fields, conv_text, tone_text, memory_info, comment)
     
     if DEBUG_MODE:
         print("--- Fetch Prompt ---")
@@ -147,7 +153,11 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
     val = memory.get_variable(field)
     
     conv_text = memory.get_history_as_text()
-    prompt = prompts.get_fetch_with_condition_prompt(field, condition, conv_text, tone_text)
+    # Format memory info for prompts
+    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    # Get comment if provided
+    comment = step.get('comment')
+    prompt = prompts.get_fetch_with_condition_prompt(field, condition, conv_text, tone_text, memory_info, comment)
     
     if DEBUG_MODE:
         print("--- Fetch with Condition Prompt ---")
@@ -380,7 +390,9 @@ def execute_condition(step, memory, conversation, tone_text, llm_model):
     
     # Use LLM to evaluate the natural language condition
     conv_text = memory.get_history_as_text()
-    prompt = prompts.get_condition_eval_prompt(condition_str, str(memory.variables), conv_text)
+    # Format memory info consistently with fetch prompts
+    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    prompt = prompts.get_condition_eval_prompt(condition_str, memory_info, conv_text)
     
     if DEBUG_MODE:
         print("--- Condition Prompt ---")
@@ -431,9 +443,11 @@ def execute_conditional_with_message(step, memory, conversation, tone_text, llm_
     
     # Use LLM to evaluate the condition and generate message in one call
     conv_text = memory.get_history_as_text()
+    # Format memory info consistently with fetch prompts
+    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
     prompt = prompts.get_conditional_with_message_prompt(
         condition_str, 
-        str(memory.variables), 
+        memory_info, 
         conv_text,
         tone_text,
         message_on_true=message_on_true,
@@ -503,14 +517,50 @@ def execute_use_tool(step, memory, tools):
     
     # Special handling for calculate
     if tool_name == 'calculate':
+        # Support both 'expression' and 'input' fields
         expression = step.get('expression')
+        if expression is None and 'input' in step:
+            input_value = step.get('input')
+            if isinstance(input_value, list) and len(input_value) > 0:
+                # Extract expression from input list (first element)
+                expression = input_value[0]
+            elif isinstance(input_value, str):
+                expression = input_value
+        
+        if expression is None:
+            logger.error("calculate tool missing 'expression' or 'input' field")
+            return StepExecutionResult("failed", message="calculate tool missing 'expression' or 'input' field")
+        
         resolved_expr = memory.resolve_templates(expression)
         try:
             result = tools.execute('calculate', **{'expression': resolved_expr})
-            # Default storage
-            memory.set_variable(f"{tool_name}_result", result)
-            # Also store as calculate_result as per some workflow examples
-            memory.set_variable("calculate_result", result)
+            
+            # Handle set_variables for calculate (result is a simple value, not an object)
+            set_vars = step.get('set_variables', [])
+            if set_vars:
+                # For calculate, the result is a simple value (string/number)
+                # Store it directly in the variable name(s) specified
+                if isinstance(set_vars, dict):
+                    # Dict format: {"new_name": "old_name"} - but for calculate, just use new_name
+                    for new_name in set_vars.keys():
+                        memory.set_variable(new_name, result)
+                else:
+                    # List format: ["var1", "var2"] - store result in each variable
+                    for item in set_vars:
+                        if isinstance(item, dict):
+                            # Dictionary mapping: {"new_name": "old_name"} - use new_name
+                            for new_name in item.keys():
+                                memory.set_variable(new_name, result)
+                        else:
+                            # String: store result directly in this variable name
+                            var_name = item
+                            memory.set_variable(var_name, result)
+            else:
+                # Default storage if no set_variables specified
+                memory.set_variable(f"{tool_name}_result", result)
+                # Also store as calculate_result as per some workflow examples
+                memory.set_variable("calculate_result", result)
+            
             return StepExecutionResult("completed")
         except Exception as e:
             logger.error(f"calculation failed: {e}")

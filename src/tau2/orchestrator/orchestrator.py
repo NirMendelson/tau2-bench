@@ -207,6 +207,7 @@ class Orchestrator:
                 )
                 self.message = last_message
                 if self.agent.is_stop(last_message):
+                    logger.info(f"AGENT sent stop signal during initialization. Message content: {last_message.content}")
                     self.done = True
                     self.termination_reason = TerminationReason.AGENT_STOP
             # Last message is a user message
@@ -233,6 +234,7 @@ class Orchestrator:
                 self.message = last_message
                 self.done = UserSimulator.is_stop(last_message)
                 if self.done:
+                    logger.info(f"USER sent stop signal during initialization. Message content: {last_message.content}")
                     self.termination_reason = TerminationReason.USER_STOP
             # Last message is a tool message
             elif isinstance(last_message, ToolMessage):
@@ -301,6 +303,7 @@ class Orchestrator:
                     self.done = True
                     if self.agent.is_stop(first_message):
                         # If the agent is stopping (###STOP###)
+                        logger.info(f"AGENT sent stop signal during solo mode initialization. Message content: {first_message.content}")
                         self.termination_reason = TerminationReason.AGENT_STOP
                     else:
                         self.termination_reason = TerminationReason.AGENT_ERROR
@@ -309,6 +312,7 @@ class Orchestrator:
                     self.to_role = Role.ENV
                     self.done = self.agent.is_stop(first_message)
                     if self.done:
+                        logger.info(f"AGENT sent stop signal during solo mode initialization (tool call). Message content: {first_message.content}")
                         self.to_role = (
                             Role.USER
                         )  # FIXIT: For now, we assume last message cannot be to the environment
@@ -399,9 +403,11 @@ class Orchestrator:
             if self.to_role == Role.ENV:
                 continue
             if self.step_count >= self.max_steps and self.to_role != Role.ENV:
+                logger.info(f"Simulation stopped: MAX_STEPS reached (step_count={self.step_count}, max_steps={self.max_steps})")
                 self.done = True
                 self.termination_reason = TerminationReason.MAX_STEPS
             if self.num_errors >= self.max_errors and self.to_role != Role.ENV:
+                logger.info(f"Simulation stopped: TOO_MANY_ERRORS reached (num_errors={self.num_errors}, max_errors={self.max_errors})")
                 self.done = True
                 self.termination_reason = TerminationReason.TOO_MANY_ERRORS
         # Send stop signal to the agent, user, and environment
@@ -465,6 +471,7 @@ class Orchestrator:
             )
             user_msg.validate()
             if UserSimulator.is_stop(user_msg):
+                logger.info(f"USER sent stop signal. Message content: {user_msg.content}")
                 self.done = True
                 self.termination_reason = TerminationReason.USER_STOP
             self.trajectory.append(user_msg)
@@ -483,6 +490,7 @@ class Orchestrator:
             )
             agent_msg.validate()
             if self.agent.is_stop(agent_msg):
+                logger.info(f"AGENT sent stop signal. Message content: {agent_msg.content}")
                 self.done = True
                 self.termination_reason = TerminationReason.AGENT_STOP
             self.trajectory.append(agent_msg)

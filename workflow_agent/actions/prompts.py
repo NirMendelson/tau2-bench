@@ -1,11 +1,14 @@
-def get_fetch_single_prompt(field_name, conv_text, tone_text):
+def get_fetch_single_prompt(field_name, conv_text, tone_text, memory_info, comment=None):
     """
     Returns a prompt to extract a single field from the conversation 
     or generate a question to ask for it.
     """
+    comment_section = ""
+    if comment:
+        comment_section = f"\n\nIMPORTANT CONTEXT ABOUT '{field_name}':\n{comment}\n"
+    
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. Read the conversation carefully and check if you have the field '{field_name}' in the conversation, or can infer it from the conversation.
-
-
+{comment_section}
 You should infer information whenever possible, even if it is only implied indirectly.
 Treat the conversation like a detective: if a human could reasonably infer the answer, you should too.
 
@@ -29,6 +32,9 @@ EXAMPLES OF INFERENCE:
 Conversation:
 {conv_text}
 
+Memory:
+{memory_info}
+
 Follow this tone when generating the question:
 {tone_text}
 
@@ -39,7 +45,7 @@ value: <extracted value if found>
 question: <question to ask if not found>
 ```"""
 
-def get_fetch_multi_prompt(field_names, conv_text, tone_text):
+def get_fetch_multi_prompt(field_names, conv_text, tone_text, memory_info, comment=None):
     """
     Returns a prompt to extract multiple fields from the conversation 
     or generate questions to ask for missing ones.
@@ -48,8 +54,12 @@ def get_fetch_multi_prompt(field_names, conv_text, tone_text):
     fields_yaml = "\n".join([f"  {f}: <extracted value if found, null if not found>" for f in field_names])
     questions_yaml = "\n".join([f"  {f}: <question to ask if not found>" for f in field_names])
     
+    comment_section = ""
+    if comment:
+        comment_section = f"\n\nIMPORTANT CONTEXT ABOUT THE FIELDS:\n{comment}\n"
+    
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. Read the conversation carefully and check if you have the fields {fields_list} in the conversation, or can infer them from the conversation.
-
+{comment_section}
 You should infer information whenever possible, even if it is only implied indirectly.
 Treat the conversation like a detective: if a human could reasonably infer the answer, you should too.
 
@@ -80,6 +90,9 @@ IMPORTANT:
 Conversation:
 {conv_text}
 
+Memory:
+{memory_info}
+
 Follow this tone when generating the questions:
 {tone_text}
 
@@ -93,14 +106,14 @@ all_found: true/false
 combined_question: <single question if all fields missing, or null if some/all found>
 ```"""
 
-def get_fetch_prompt(field_name, conv_text, tone_text):
+def get_fetch_prompt(field_name, conv_text, tone_text, memory_info="", comment=None):
     """
     Backward compatibility wrapper for single field fetch.
     Use get_fetch_single_prompt or get_fetch_multi_prompt directly for better clarity.
     """
-    return get_fetch_single_prompt(field_name, conv_text, tone_text)
+    return get_fetch_single_prompt(field_name, conv_text, tone_text, memory_info, comment)
 
-def get_fetch_with_condition_prompt(field_name, condition, conv_text, tone_text):
+def get_fetch_with_condition_prompt(field_name, condition, conv_text, tone_text, memory_info, comment=None):
     """
     Returns a prompt to extract a field and verify it meets a specific condition.
     Conditions are in natural language format like "{variable} = value" or "{variable} <= 5".
@@ -111,11 +124,15 @@ def get_fetch_with_condition_prompt(field_name, condition, conv_text, tone_text)
     else:
         condition_str = str(condition)
 
+    comment_section = ""
+    if comment:
+        comment_section = f"\n\nIMPORTANT CONTEXT ABOUT '{field_name}':\n{comment}\n"
+
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. 
 
 TASK 1: FETCH FIELD
 Read the conversation carefully and check if you have the field '{field_name}' in the conversation, or can infer it from the conversation.
-
+{comment_section}
 You should infer information whenever possible, even if it is only implied indirectly.
 Treat the conversation like a detective: if a human could reasonably infer the answer, you should too.
 
@@ -149,6 +166,9 @@ IMPORTANT INSTRUCTIONS FOR CONDITION EVALUATION:
 
 Conversation:
 {conv_text}
+
+Memory:
+{memory_info}
 
 Follow this tone when generating the question:
 {tone_text}
@@ -308,7 +328,7 @@ def get_condition_eval_prompt(condition, field_info, conv_text):
 
 Condition to evaluate: {condition_str}
 
-Available variables:
+Memory:
 {field_info}
 
 Conversation history (for context):
@@ -351,7 +371,7 @@ This is part of a conditional_with_message action that will re-evaluate the cond
 
 Condition to evaluate: {condition_str}
 
-Available variables:
+Memory:
 {field_info}
 
 Conversation history (for context):

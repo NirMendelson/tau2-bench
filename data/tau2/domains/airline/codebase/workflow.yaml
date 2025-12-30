@@ -1328,7 +1328,7 @@ steps:
 
   - id: check_can_cancel_reservation
     action: conditional
-    condition: "{can_cancel} = false"
+    condition: "{can_cancel} = exists and false"
     then:
       steps:
         - id: inform_can_cancel_reservation
@@ -1477,39 +1477,6 @@ steps:
                       message: "I checked your reservation and did not find any cancelled flights. Please verify your complaint or contact customer service for further assistance."
           else:
             steps:
-              # Step: Understand which flight the user is complaining about
-              - id: get_problematic_flight_details
-                action: instruction
-                instruction: |
-                  You need to understand what flight the user is complaining about.
-                  Ask the user for the problematic flight details like flight code or date.
-                  Once you have the flight code and date, set the variable flight_to_refund as a list with [code, date].
-                  For example, if the flight code is "HAT001" and date is "2024-01-15", set flight_to_refund to ["HAT001", "2024-01-15"].
-                set_variable: flight_to_refund
-
-              # Step: Check if the flight has already departed
-              - id: check_flight_departed
-                action: instruction
-                instruction: |
-                  Check if the flight_to_refund date is after now_date.
-                  Get now_date from memory (format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS).
-                  Compare flight_to_refund[1] (the date) with now_date.
-                  If flight_to_refund[1] is after now_date, set flight_not_departed to true.
-                  If flight_to_refund[1] is equal to or before now_date, set flight_not_departed to false.
-                set_variable: flight_not_departed
-
-              # Step: Handle case where flight has already departed
-              - id: handle_departed_flight_refund
-                action: conditional
-                condition: "{flight_not_departed} = false"
-                then:
-                  steps:
-                    - id: inform_refund_not_possible_departed
-                      action: reply
-                      message: "I'm sorry, but refunds are not possible because the flight has already departed. Is there anything else I can help you with?"
-                else:
-                  steps:
-
               # Step 14: Check if complaint is about delayed flights
               - id: check_delayed_flight_complaint
                 action: conditional
@@ -1530,22 +1497,6 @@ steps:
                       condition: "{wants_change_or_cancel} contains change or cancel"
                       then:
                         steps:
-                          # Step 17: Extract flight numbers and dates from reservation
-                          - id: extract_flight_info_for_delayed
-                            action: instruction
-                            instruction: |
-                              Extract the flight numbers and dates from the reservation_flights.
-                              The reservation_flights is a list of ReservationFlight objects, each containing:
-                              - flight_number: The flight number (e.g., "HAT001")
-                              - date: The flight date in YYYY-MM-DD format
-                              
-                              Set the following variables:
-                              - flight_numbers: A list of all flight numbers from the reservation
-                              - flight_dates: A list of all flight dates from the reservation
-                            set_variables:
-                              - flight_numbers
-                              - flight_dates
-                          
                           # Step 18: Check if any flight was delayed
                           - id: check_flight_delayed_status
                             action: instruction
@@ -1579,8 +1530,8 @@ steps:
                                 - id: get_number_of_passengers_delayed
                                   action: instruction
                                   instruction: |
-                                    Get the number of passengers from reservation_passengers.
-                                    reservation_passengers is a list of Passenger objects.
+                                    Count the number of passengers from the passengers variable in memory.
+                                    The passengers variable is a list of Passenger objects that was set from get_reservation_details.
                                     Set number_of_passengers to the length of this list.
                                   set_variable: number_of_passengers
                                 
@@ -1628,7 +1579,7 @@ steps:
 
 ---
 workflow: EscalateToHuman
-when: "only if the user asks explicitly to transfer to a human agent, escalate to a human, or speak with a human representative"
+when: "ONLY if the user explicitly asks to be transferred to a human agent / escalate to a human / speak with a human representative. If the user just want , you should not choose this workflow."
 
 keywords:
   - transfer to human
@@ -1685,3 +1636,167 @@ steps:
     action: reply
     message: |
       use your judgement to reply to the user as a support agent would.
+
+---
+workflow: GivingCheckedBagInformation
+when: "user asks about checked bag allowance or baggage information"
+
+keywords:
+  - checked bag allowance
+  - baggage information
+  - checked bags
+  - baggage
+  - bag allowance
+  - bag information
+  - bag allowance
+
+examples:
+  - "How many checked bags can I bring?"
+  - "What is the checked bag allowance?"
+  - "Can I bring a checked bag?"
+  - "What is the baggage information?"
+  - "How many bags can I bring?"
+  - "What is the bag allowance?"
+  - "Can I bring a bag?"
+  - "What is the bag information?"
+
+steps:
+  # Step 1: Get user ID (if not already available)
+  - id: fetch_user_id
+    action: fetch
+    field: user_id  
+  # Step 3: Get user details to retrieve membership status
+  - id: get_user_details
+    action: use_tool
+    tool_name: get_user_details
+    input: ["{{ user_id }}"]
+    set_variables:
+      - membership
+
+  - id: fetch_reservation_id
+    action: fetch
+    field: reservation_id
+    comment: "the reservation_id is a 6 letter code, users sometimes refer to it as confirmation code."
+
+  - id: get_reservation_details
+    action: use_tool
+    tool_name: get_reservation_details
+    input: ["{{ reservation_id }}"]
+    set_variables:
+      - cabin
+      - passengers
+
+  # Step 4: Count number of passengers
+  - id: count_passengers
+    action: instruction
+    instruction: |
+      Count the number of passengers from the passengers variable in memory.
+      The passengers variable is a list of Passenger objects that was set from get_reservation_details.
+      Set number_of_passengers to the length of this list.
+    set_variable: number_of_passengers
+
+  # Step 5: Calculate free checked bags based on membership and cabin
+  - id: calculate_free_bags
+    action: conditional
+    condition: "{membership} = regular"
+    then:
+      steps:
+        - id: check_regular_cabin
+          action: conditional
+          condition: "{cabin} = basic_economy"
+          then:
+            steps:
+              - id: set_free_bags
+                action: set_variable
+                variable: free_checked_bags_per_passenger
+                value: 0
+          else:
+            steps:
+              - id: check_regular_economy
+                action: conditional
+                condition: "{cabin} = economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 1
+                else:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 2
+    else:
+      steps:
+        - id: check_silver
+          action: conditional
+          condition: "{membership} = silver"
+          then:
+            steps:
+              - id: check_silver_cabin
+                action: conditional
+                condition: "{cabin} = basic_economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 1
+                else:
+                  steps:
+                    - id: check_silver_economy
+                      action: conditional
+                      condition: "{cabin} = economy"
+                      then:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 2
+                      else:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+          else:
+            # Must be gold member
+            steps:
+              - id: check_gold_cabin
+                action: conditional
+                condition: "{cabin} = basic_economy"
+                then:
+                  steps:
+                    - id: set_free_bags
+                      action: set_variable
+                      variable: free_checked_bags_per_passenger
+                      value: 2
+                else:
+                  steps:
+                    - id: check_gold_economy
+                      action: conditional
+                      condition: "{cabin} = economy"
+                      then:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+                      else:
+                        steps:
+                          - id: set_free_bags
+                            action: set_variable
+                            variable: free_checked_bags_per_passenger
+                            value: 3
+
+  - id: calculate_total_checked_bags
+    action: use_tool
+    tool_name: calculate
+    input: ["{{ free_checked_bags_per_passenger }} * {{ number_of_passengers }}"]
+    set_variables:
+      - total_checked_bags
+  # Step 6: Reply with checked bag information
+  - id: reply_checked_bag_info
+    action: reply
+    message: "You have a membership of {{ membership }} and on cabin {{ cabin }} therefore eligible for {{ free_checked_bags_per_passenger }} free checked bags per passenger. You are {{ number_of_passengers }} passengers and therefore have a total of {{ total_checked_bags }} free bags"

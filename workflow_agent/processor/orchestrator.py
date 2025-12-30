@@ -176,4 +176,6 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
     # Should we return "I'm done" or just wait?
     # Usually the last step corresponds to a reply.
     # If result_message is None (e.g. silent completion), the framework expects a string return?
+    if not memory.stack:
+        logger.info(f"Workflow stack is empty. Returning: {result_message if result_message else 'Task completed.'}")
     return result_message if result_message else "Task completed."
