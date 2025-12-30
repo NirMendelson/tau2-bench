@@ -302,7 +302,9 @@ def execute_reply(step, memory, conversation, tone_text, llm_model):
     resolved_message = memory.resolve_templates(message_template)
     
     conv_text = memory.get_history_as_text()
-    prompt = prompts.get_reply_prompt(resolved_message, tone_text, conv_text)
+    # Format memory info for prompts
+    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    prompt = prompts.get_reply_prompt(resolved_message, tone_text, conv_text, memory_info)
     
     if DEBUG_MODE:
         print("--- Reply Prompt ---")

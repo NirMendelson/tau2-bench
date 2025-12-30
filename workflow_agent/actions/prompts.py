@@ -235,7 +235,7 @@ questions:
 all_found: true/false
 ```"""
 
-def get_reply_prompt(message_template, tone_text, conversation_context):
+def get_reply_prompt(message_template, tone_text, conversation_context, memory_info):
     """
     Returns a prompt to generate a natural language reply based on a template message.
     """
@@ -246,6 +246,9 @@ Generate the response using the tone below:
 
 Read the conversation history to answer correctly in context:
 {conversation_context}
+
+Memory:
+{memory_info}
 
 CRITICAL:
 - You have to fit the message to the conversation history, make sure the message is relevant to the conversation history.

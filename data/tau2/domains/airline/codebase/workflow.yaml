@@ -1800,3 +1800,83 @@ steps:
   - id: reply_checked_bag_info
     action: reply
     message: "You have a membership of {{ membership }} and on cabin {{ cabin }} therefore eligible for {{ free_checked_bags_per_passenger }} free checked bags per passenger. You are {{ number_of_passengers }} passengers and therefore have a total of {{ total_checked_bags }} free bags"
+
+---
+workflow: ModifyInsurance
+when: "user wants to modify or change insurance after the initial booking. if the user already has insurance, you should not choose this workflow."
+
+keywords:
+  - modify insurance
+  - change insurance
+  - add insurance
+  - remove insurance
+  - update insurance
+  - insurance modification
+  - insurance change
+  - insurance update
+  - insurance removal
+
+examples:
+- "I want to add insurance to my reservation"
+- "Can I remove insurance from my reservation?"
+- "I need to modify my insurance"
+- "I want to change my insurance"
+- "I want to update my insurance"
+- "I want to remove my insurance"
+- "I want to modify my insurance"
+- "I want to change my insurance"
+
+steps:
+- id: reply_insurance_change_info
+  action: reply
+  message: "I'm sorry, but insurance changes are not allowed after the initial booking. You can only add insurance to your reservation at the time of booking."
+
+---
+workflow: checkFlightDetails
+when: "user asks about the details of the flight/reservation- want to know the flight number, date, time, origin, destination, insurance, cabin, etc."
+
+keywords:
+  - flight details
+  - reservation details
+  - flight number
+  - flight date
+  - flight time
+  - origin
+  - destination
+  - insurance
+  - cabin
+
+examples:
+  - "What is the flight number?"
+  - "What is the flight date?"
+  - "What is the flight time?"
+  - "What is the origin?"
+  - "What is the destination?"
+  - "What is the insurance?"
+  - "What is the cabin?"
+
+steps:
+
+  - id: fetch_user_id
+    action: fetch
+    field: user_id
+
+  - id: fetch_reservation_id
+    action: fetch
+    field: reservation_id
+    comment: "the reservation_id is a 6 letter code, users sometimes refer to it as confirmation code."
+
+  - id: get_user_details
+    action: use_tool
+    tool_name: get_user_details
+    input: ["{{ user_id }}"]
+
+
+  - id: get_reservation_details
+    action: use_tool
+    tool_name: get_reservation_details
+    input: ["{{ reservation_id }}"]
+
+  - id: reply_flight_details
+    action: reply
+    message: "Use the data in your memory to answer the user's question about the flight details."
