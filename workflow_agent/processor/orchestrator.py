@@ -62,7 +62,7 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
             # So we don't clear all variables, just the flow state.
 
     # 3. Execute Loop
-    result_message = None
+    messages_to_return = []
     
     while memory.stack:
         # Get current frame
@@ -72,7 +72,11 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
         
         # Check if done with this frame
         if index >= len(steps):
-            memory.stack.pop()
+            # Frame is complete - pop it and continue with parent frame
+            popped_frame = memory.stack.pop()
+            # If we popped a branch frame (indicated by name containing '_condition' or being a subworkflow)
+            # and there's still a parent frame, we don't clear messages_to_return
+            # as they should be sent to the user
             continue
             
         current_step = steps[index]
@@ -88,25 +92,33 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
             memory.get_history(), # Pass raw list, executor calls get_as_text
             tone_text, 
             llm_model, 
-            tools
+            tools,
+            workflows
         )
         
         if result.status == "blocking":
-            # Stop execution, return message to user
-            result_message = result.message
-            if result_message:
-                memory.add_to_history("assistant", result_message)
-            return result_message
+            # Stop execution, return accumulated messages + blocking message to user
+            blocking_message = result.message
+            if blocking_message:
+                messages_to_return.append(blocking_message)
+                memory.add_to_history("assistant", blocking_message)
+            return "\n".join(messages_to_return)
             
         elif result.status == "failed":
             # Fallback
             fb_result = step_executor.handle_fallback(memory, tools)
+            messages_to_return.append(fb_result.message)
             memory.add_to_history("assistant", fb_result.message)
             # Clear stack to stop?
             memory.stack = []
-            return fb_result.message
+            return "\n".join(messages_to_return)
             
         elif result.status == "completed":
+            # Check if there's a message from this completed step (e.g., non-blocking reply)
+            if hasattr(result, 'message') and result.message:
+                messages_to_return.append(result.message)
+                # Message already added to history by the step executor for non-blocking actions
+            
             # Check for special results (branching / subworkflow related)
             
             # 1. Condition Result
@@ -116,18 +128,12 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
                 # Push new frame based on result
                 branch_steps = []
                 if cond_true:
-                    # 'then' branch
-                    # In YAML: `then: steps: [...]` OR `then: { single step }`?
-                    # Looking at YAML: 
-                    # `then: steps: [...]` (lines 51, 82)
-                    # `then: id: ...` (single step object, line 126)
                     then_block = current_step.get('then') or {}
                     if 'steps' in then_block:
                         branch_steps = then_block['steps']
                     elif 'id' in then_block or 'action' in then_block:
                         branch_steps = [then_block]
                 else:
-                    # 'else' branch
                     else_block = current_step.get('else') or {}
                     if 'steps' in else_block:
                         branch_steps = else_block['steps']
@@ -141,18 +147,12 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
                         "index": 0,
                         "name": f"{frame['name']}_condition"
                     })
-                    # Do NOT increment index of current frame yet?
-                    # Actually, the condition step ITSELF is done. 
-                    # We should increment the index of the PARENT frame so when we pop back, we move to next step.
                     frame['index'] += 1
                     continue # Loop will pick up new top frame
                     
             # 2. Subworkflow
             elif current_step.get('action') == 'use_subworkflow':
                 sub_name = current_step.get('subworkflow')
-                # Find subworkflow definition
-                # We need to look in 'workflows' list passed to function
-                # The 'workflows' list contains objects with 'subworkflow': 'Name'
                 sub_wf_obj = next((w for w in workflows if w.get('subworkflow') == sub_name), None)
                 
                 if sub_wf_obj and 'steps' in sub_wf_obj:
@@ -163,19 +163,12 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
                     })
                     frame['index'] += 1
                     continue
-                else:
-                    print(f"Subworkflow {sub_name} not found")
-                    # Treat as simple completion
-                    
-            # Normal completion (or specific sub-steps like fetch_with_condition's implicit else?)
-            # Increment index
+            
+            # Normal completion 
             frame['index'] += 1
 
     # Stack empty -> Workflow done (or idle)
-    # If we finished a workflow locally, we might not have a message to return.
-    # Should we return "I'm done" or just wait?
-    # Usually the last step corresponds to a reply.
-    # If result_message is None (e.g. silent completion), the framework expects a string return?
     if not memory.stack:
-        logger.info(f"Workflow stack is empty. Returning: {result_message if result_message else 'Task completed.'}")
-    return result_message if result_message else "Task completed."
+        logger.info(f"Workflow stack is empty. Returning: {' '.join(messages_to_return) if messages_to_return else 'Task completed.'}")
+    
+    return "\n".join(messages_to_return) if messages_to_return else "Task completed."

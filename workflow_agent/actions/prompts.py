@@ -427,7 +427,7 @@ def get_instruction_prompt(instruction_text, tools_available, memory_variables, 
     tools_list = "\n".join([f"- {tool}" for tool in tools_available]) if tools_available else "No specific tools available (use standard reasoning)"
     
     # Format memory variables for context
-    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory_variables.items()])
+    memory_info = memory_variables
     
     return f"""You are an intelligence agent executing a specific task. Follow the instructions below carefully.
 

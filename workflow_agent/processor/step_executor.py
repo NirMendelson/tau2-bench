@@ -3,10 +3,32 @@ import litellm
 import os
 from loguru import logger
 from ..actions import prompts
+from .action_config import is_action_blocking
 import re
 
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
+
+def _create_result_with_blocking_check(action_name: str, message: str, memory, result_data=None):
+    """
+    Helper function to create StepExecutionResult based on action blocking config.
+    
+    Args:
+        action_name: Name of the action to check blocking config
+        message: Message to send (if any)
+        memory: Memory object to add message to history if non-blocking
+        result_data: Optional additional result data
+        
+    Returns:
+        StepExecutionResult with appropriate status (blocking or completed)
+    """
+    if is_action_blocking(action_name):
+        return StepExecutionResult("blocking", message=message, result=result_data)
+    else:
+        # Non-blocking: add message to history and continue
+        if message:
+            memory.add_to_history("assistant", message)
+        return StepExecutionResult("completed", message=message, result=result_data)
 
 class StepExecutionResult:
     def __init__(self, status, message=None, next_step_id=None, result=None):
@@ -53,7 +75,7 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
     conv_text = memory.get_history_as_text()
     
     # Format memory info for prompts
-    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    memory_info = memory.get_variables_as_json()
     
     # Get comment if provided
     comment = step.get('comment')
@@ -111,21 +133,21 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
                 # Prefer combined question if available
                 combined_question = result.get('combined_question')
                 if combined_question:
-                    return StepExecutionResult("blocking", message=combined_question)
+                    return _create_result_with_blocking_check("fetch", combined_question, memory)
                 else:
                     # Combine individual questions for missing fields
                     questions = [q for f, q in questions_data.items() if f in still_missing and q]
                     if questions:
                         if len(questions) == 1:
-                            return StepExecutionResult("blocking", message=questions[0])
+                            return _create_result_with_blocking_check("fetch", questions[0], memory)
                         else:
                             # Combine multiple questions naturally
                             combined = " ".join(questions)
-                            return StepExecutionResult("blocking", message=combined)
+                            return _create_result_with_blocking_check("fetch", combined, memory)
                     else:
                         # Fallback if no questions provided
                         missing_list = ", ".join(still_missing)
-                        return StepExecutionResult("blocking", message=f"Please provide: {missing_list}")
+                        return _create_result_with_blocking_check("fetch", f"Please provide: {missing_list}", memory)
         else:
             # Single field response format (backward compatible)
             if result.get('found'):
@@ -133,7 +155,7 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
                 # Recursively check if we have more missing fields (for backward compatibility)
                 return execute_fetch(step, memory, conversation, tone_text, llm_model)
             else:
-                return StepExecutionResult("blocking", message=result.get('question'))
+                return _create_result_with_blocking_check("fetch", result.get('question'), memory)
             
     except Exception as e:
         # Fallback if parsing fails
@@ -154,7 +176,7 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
     
     conv_text = memory.get_history_as_text()
     # Format memory info for prompts
-    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    memory_info = memory.get_variables_as_json()
     # Get comment if provided
     comment = step.get('comment')
     prompt = prompts.get_fetch_with_condition_prompt(field, condition, conv_text, tone_text, memory_info, comment)
@@ -198,7 +220,7 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
             return StepExecutionResult("completed", result={"condition": False})
         else:
             # Not found and condition false -> ask question
-            return StepExecutionResult("blocking", message=result.get('question'))
+            return _create_result_with_blocking_check("fetch_with_condition", result.get('question'), memory)
             
     except Exception as e:
         print(f"Error parsing fetch_condition response: {e}")
@@ -276,34 +298,35 @@ def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
                 questions = [q for f, q in questions_data.items() if f in still_missing and q]
                 if questions:
                     if len(questions) == 1:
-                        return StepExecutionResult("blocking", message=questions[0])
+                        return _create_result_with_blocking_check("fetch_with_message", questions[0], memory)
                     else:
                         # Combine multiple questions naturally
                         combined = " ".join(questions)
-                        return StepExecutionResult("blocking", message=combined)
+                        return _create_result_with_blocking_check("fetch_with_message", combined, memory)
                 else:
                     # Fallback to the provided message if no questions in response
-                    return StepExecutionResult("blocking", message=resolved_message)
+                    return _create_result_with_blocking_check("fetch_with_message", resolved_message, memory)
         else:
             # Fallback if response format is unexpected
             logger.warning(f"unexpected response format from fetch_with_message: {result}")
-            return StepExecutionResult("blocking", message=resolved_message)
+            return _create_result_with_blocking_check("fetch_with_message", resolved_message, memory)
             
     except Exception as e:
         # Fallback if parsing fails
         logger.error(f"error parsing fetch_with_message response: {e}")
-        return StepExecutionResult("blocking", message=resolved_message)
+        return _create_result_with_blocking_check("fetch_with_message", resolved_message, memory)
 
 def execute_reply(step, memory, conversation, tone_text, llm_model):
     """
     Sends a message to the user based on the reply action.
+    Blocking behavior is controlled by action_config.
     """
     message_template = step.get('message')
     resolved_message = memory.resolve_templates(message_template)
     
     conv_text = memory.get_history_as_text()
     # Format memory info for prompts
-    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    memory_info = memory.get_variables_as_json()
     prompt = prompts.get_reply_prompt(resolved_message, tone_text, conv_text, memory_info)
     
     if DEBUG_MODE:
@@ -321,11 +344,14 @@ def execute_reply(step, memory, conversation, tone_text, llm_model):
     if DEBUG_MODE:
         print("---agent output---")
         print(final_message)
-    return StepExecutionResult("blocking", message=final_message)
+    
+    # Check blocking config for reply action
+    return _create_result_with_blocking_check("reply", final_message, memory)
 
 def execute_reply_exact_message(step, memory, conversation, tone_text, llm_model):
     """
     Sends a message to the user based on the reply_exact_message action.
+    Blocking behavior is controlled by action_config.
     """
     message_template = step.get('message')
     resolved_message = memory.resolve_templates(message_template)
@@ -348,7 +374,9 @@ def execute_reply_exact_message(step, memory, conversation, tone_text, llm_model
     if DEBUG_MODE:
         print("---agent output---")
         print(final_message)
-    return StepExecutionResult("blocking", message=final_message)
+    
+    # Check blocking config for reply_exact_message action
+    return _create_result_with_blocking_check("reply_exact_message", final_message, memory)
 
 def execute_set_variable(step, memory):
     """
@@ -393,7 +421,7 @@ def execute_condition(step, memory, conversation, tone_text, llm_model):
     # Use LLM to evaluate the natural language condition
     conv_text = memory.get_history_as_text()
     # Format memory info consistently with fetch prompts
-    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    memory_info = memory.get_variables_as_json()
     prompt = prompts.get_condition_eval_prompt(condition_str, memory_info, conv_text)
     
     if DEBUG_MODE:
@@ -446,7 +474,7 @@ def execute_conditional_with_message(step, memory, conversation, tone_text, llm_
     # Use LLM to evaluate the condition and generate message in one call
     conv_text = memory.get_history_as_text()
     # Format memory info consistently with fetch prompts
-    memory_info = "\n".join([f"  {key}: {value}" for key, value in memory.variables.items()]) if memory.variables else "  (no variables set yet)"
+    memory_info = memory.get_variables_as_json()
     prompt = prompts.get_conditional_with_message_prompt(
         condition_str, 
         memory_info, 
@@ -487,14 +515,13 @@ def execute_conditional_with_message(step, memory, conversation, tone_text, llm_
         
         message = result.get('message')
         
-        # If message was generated, send it and block
+        # If message was generated, send it (blocking behavior based on config)
         if message and message.strip() and message.lower() != 'null':
             if DEBUG_MODE:
-                logger.info(f"conditional_with_message: condition is {is_true}, message generated, blocking")
+                logger.info(f"conditional_with_message: condition is {is_true}, message generated")
             
-            # Return blocking - step will be re-executed on next cycle
-            # The orchestrator will keep the step at the same index when blocking
-            return StepExecutionResult("blocking", message=message.strip(), result={"condition": is_true})
+            # Check blocking config for conditional_with_message action
+            return _create_result_with_blocking_check("conditional_with_message", message.strip(), memory, result={"condition": is_true})
         
         # No message for this condition result - we're done, continue to next step
         if DEBUG_MODE:
@@ -663,7 +690,7 @@ def execute_use_tool(step, memory, tools):
                 
     return StepExecutionResult("completed")
 
-def execute_instruction(step, memory, conversation, tone_text, llm_model, tools):
+def execute_instruction(step, memory, conversation, tone_text, llm_model, tools, workflows):
     """
     Executes an instruction action where the LLM performs a complex task.
     The LLM is given an instruction, available tools, and memory context,
@@ -687,7 +714,7 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools)
         return StepExecutionResult("failed", message="Instruction action missing 'set_variable' field")
     
     # Get current memory variables (for context)
-    memory_variables = memory.variables
+    memory_variables_json = memory.get_variables_as_json()
     
     # Get conversation context
     conv_text = memory.get_history_as_text()
@@ -696,7 +723,7 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools)
     prompt = prompts.get_instruction_prompt(
         instruction_text,
         tools_available,
-        memory_variables,
+        memory_variables_json,
         conv_text,
         tone_text
     )
@@ -764,53 +791,75 @@ def handle_fallback(memory, tools):
     result = tools.execute('transfer_to_human_agents', **{'summary': "Workflow fallback triggered"})
     return StepExecutionResult("blocking", message=result)
 
-def execute_step(step, memory, conversation, tone_text, llm_model, tools):
+def execute_step(step, memory, conversation, tone_text, llm_model, tools, workflows):
     """
     Main entry point for executing an individual step based on its action type.
     """
 
     action = step.get('action')
     
+    result = None
     if action == 'fetch':
-        return execute_fetch(step, memory, conversation, tone_text, llm_model)
+        result = execute_fetch(step, memory, conversation, tone_text, llm_model)
     elif action == 'fetch_with_condition':
-        return execute_fetch_with_condition(step, memory, conversation, tone_text, llm_model)
+        result = execute_fetch_with_condition(step, memory, conversation, tone_text, llm_model)
     elif action == 'fetch_with_message':
-        return execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
+        result = execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
     elif action == 'reply':
-        return execute_reply(step, memory, conversation, tone_text, llm_model)
+        result = execute_reply(step, memory, conversation, tone_text, llm_model)
     elif action == 'reply_exact_message':
-        return execute_reply_exact_message(step, memory, conversation, tone_text, llm_model)
+        result = execute_reply_exact_message(step, memory, conversation, tone_text, llm_model)
     elif action == 'set_variable':
-        return execute_set_variable(step, memory)
+        result = execute_set_variable(step, memory)
     elif action == 'conditional' or action == 'condition':
-        return execute_condition(step, memory, conversation, tone_text, llm_model)
+        result = execute_condition(step, memory, conversation, tone_text, llm_model)
     elif action == 'conditional_with_message':
-        return execute_conditional_with_message(step, memory, conversation, tone_text, llm_model)
+        result = execute_conditional_with_message(step, memory, conversation, tone_text, llm_model)
     elif action == 'use_tool':
-        return execute_use_tool(step, memory, tools)
+        result = execute_use_tool(step, memory, tools)
     elif action == 'instruction':
-        return execute_instruction(step, memory, conversation, tone_text, llm_model, tools)
+        result = execute_instruction(step, memory, conversation, tone_text, llm_model, tools, workflows)
     elif action == 'loop':
-        return execute_loop(step, memory, conversation, tone_text, llm_model, tools)
+        result = execute_loop(step, memory, conversation, tone_text, llm_model, tools, workflows)
     elif action == 'use_subworkflow':
-        # Handled by orchestrator usually, or we treat it as completed so orchestrator can push stack
-        return StepExecutionResult("completed") # Orchestrator will see action type
-        
-    return StepExecutionResult("failed", message=f"Unknown action: {action}")
+        # Result "completed" is handled by the caller to push stack
+        return StepExecutionResult("completed")
+    else:
+        return StepExecutionResult("failed", message=f"Unknown action: {action}")
 
-def execute_loop(step, memory, conversation, tone_text, llm_model, tools):
+    # Handle automatic branching if result has a condition (for loops/recursive calls)
+    if result.status == "completed" and hasattr(result, 'result') and result.result and 'condition' in result.result:
+        is_true = result.result['condition']
+        branch_block = step.get('then' if is_true else 'else') or {}
+        branch_steps = branch_block.get('steps', [branch_block] if ('id' in branch_block or 'action' in branch_block) else [])
+        
+        if branch_steps:
+            # Recursively execute branch steps
+            for b_step in branch_steps:
+                b_result = execute_step(b_step, memory, conversation, tone_text, llm_model, tools, workflows)
+                if b_result.status != "completed":
+                    return b_result
+                    
+    return result
+
+def execute_loop(step, memory, conversation, tone_text, llm_model, tools, workflows):
     """
-    Iterates over a list, sets a loop variable, and executes a subaction for each item.
+    Iterates over a list, sets a loop variable, and executes steps for each item.
+    Supports both loop_steps (list of steps) and subaction (single step) for backward compatibility.
     Collects results into a list.
     """
     loop_over_var = step.get('loop_over')
     loop_variable_name = step.get('loop_variable')
+    loop_steps = step.get('loop_steps')
     subaction = step.get('subaction')
     set_variable_name = step.get('set_variable')
     
-    if not loop_over_var or not loop_variable_name or not subaction or not set_variable_name:
-         return StepExecutionResult("failed", message="Loop action missing required fields (loop_over, loop_variable, subaction, set_variable)")
+    if not loop_over_var or not loop_variable_name:
+         return StepExecutionResult("failed", message="Loop action missing required fields (loop_over, loop_variable)")
+    
+    # Must have either loop_steps or subaction
+    if not loop_steps and not subaction:
+         return StepExecutionResult("failed", message="Loop action missing required fields (loop_steps or subaction)")
 
     # Get the list from memory
     items = []
@@ -834,82 +883,124 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools):
     original_val = memory.get_variable(loop_variable_name)
     
     for item in items:
-        # Set loop variable
+        # Set loop variable and context key for nesting
+        item_str = str(item) if item is not None else None
+        old_context = getattr(memory, 'context_key', None)
+        memory.context_key = item_str
+        
         memory.set_variable(loop_variable_name, item)
         
-        # Execute subaction
-        result = execute_step(subaction, memory, conversation, tone_text, llm_model, tools)
-        
-        if result.status == "failed":
-            logger.error(f"Loop subaction failed for item {item}: {result.message}")
-            return StepExecutionResult("failed", message=f"Loop failed on item {item}: {result.message}")
-        
-        if result.status == "blocking":
-             return result
-             
-        # Collection strategy
-        sub_tool_name = subaction.get('tool_name')
-        if sub_tool_name:
-             # Check if set_variables was used in subaction
-             sub_set_vars = subaction.get('set_variables')
-             
-             if sub_set_vars:
-                 # Collect specific extracted variables into a dictionary
-                 # Handle both list format ["var1"] and dict format {"new_name": "old_name"}
-                 item_result = {}
-                 
-                 # Extract target variable names (keys for dict format, values for list format)
-                 if isinstance(sub_set_vars, dict):
-                     # Dict format: {"new_name": "old_name"} - collect new_name
-                     target_vars = list(sub_set_vars.keys())
-                 else:
-                     # List format: ["var1", "var2"] or [{"new_name": "old_name"}]
-                     target_vars = []
-                     for item in sub_set_vars:
-                         if isinstance(item, dict):
-                             # Dictionary mapping: {"new_name": "old_name"} - collect new_name
-                             target_vars.extend(item.keys())
-                         else:
-                             # String: direct variable name
-                             target_vars.append(item)
-                 
-                 for var_name in target_vars:
-                     item_result[var_name] = memory.get_variable(var_name)
-                 logger.info(f"loop collected item result (with set_variables): {item_result}")
-                 results.append(item_result)
-             else:
-                 # Default: collect the full result object
-                 result_var_name = f"{sub_tool_name}_result"
-                 val = memory.get_variable(result_var_name)
-                 logger.info(f"loop collected tool result: {result_var_name}={val} (type: {type(val)})")
-                 results.append(val)
-                 
-             # Clear the tool result for next iteration to prevent stale data if next call fails
-             # (Though execute_use_tool usually overwrites or errors)
-             if f"{sub_tool_name}_result" in memory.variables:
-                  pass # Actually memory.set_variable doesn't easily support delete, just overwrite is fine.
-        elif subaction.get('action') == 'set_variable':
-             var_name = subaction.get('variable')
-             val = memory.get_variable(var_name)
-             results.append(val)
-        elif subaction.get('action') == 'fetch_with_message' or subaction.get('action') == 'fetch':
-             # For fetch, we can check the field
-             field = subaction.get('field')
-             if field:
-                 val = memory.get_variable(field)
-                 results.append(val)
-             else:
-                 # Fallback
-                 results.append(None)
+        # Execute either loop_steps (list of steps) or subaction (single step)
+        if loop_steps:
+            # Execute multiple steps in sequence
+            for sub_step in loop_steps:
+                result = execute_step(sub_step, memory, conversation, tone_text, llm_model, tools, workflows)
+                
+                # Handle Subworkflow manually inside loops
+                if sub_step.get('action') == 'use_subworkflow':
+                    sub_name = sub_step.get('subworkflow')
+                    sub_wf_obj = next((w for w in workflows if w.get('subworkflow') == sub_name), None)
+                    if sub_wf_obj and 'steps' in sub_wf_obj:
+                        for s_step in sub_wf_obj['steps']:
+                            s_result = execute_step(s_step, memory, conversation, tone_text, llm_model, tools, workflows)
+                            if s_result.status != "completed":
+                                return s_result
+                    else:
+                        logger.error(f"Subworkflow {sub_name} not found in loop")
+                
+                if result.status == "failed":
+                    logger.error(f"Loop step {sub_step.get('id', 'unknown')} failed for item {item}: {result.message}")
+                    return StepExecutionResult("failed", message=f"Loop failed on item {item} at step {sub_step.get('id', 'unknown')}: {result.message}")
+                
+                if result.status == "blocking":
+                    return result
+                
+                # Continue to next step if completed
         else:
-             results.append(None)
+            # Execute single subaction (backward compatibility)
+            result = execute_step(subaction, memory, conversation, tone_text, llm_model, tools, workflows)
+            
+            if result.status == "failed":
+                logger.error(f"Loop subaction failed for item {item}: {result.message}")
+                return StepExecutionResult("failed", message=f"Loop failed on item {item}: {result.message}")
+            
+            if result.status == "blocking":
+                return result
+                 
+            # Collection strategy for single subaction (backward compatibility)
+            sub_tool_name = subaction.get('tool_name')
+            if sub_tool_name:
+                 # Check if set_variables was used in subaction
+                 sub_set_vars = subaction.get('set_variables')
+                 
+                 if sub_set_vars:
+                     # Collect specific extracted variables into a dictionary
+                     # Handle both list format ["var1"] and dict format {"new_name": "old_name"}
+                     item_result = {}
+                     
+                     # Extract target variable names (keys for dict format, values for list format)
+                     if isinstance(sub_set_vars, dict):
+                         # Dict format: {"new_name": "old_name"} - collect new_name
+                         target_vars = list(sub_set_vars.keys())
+                     else:
+                         # List format: ["var1", "var2"] or [{"new_name": "old_name"}]
+                         target_vars = []
+                         for item in sub_set_vars:
+                             if isinstance(item, dict):
+                                 # Dictionary mapping: {"new_name": "old_name"} - collect new_name
+                                 target_vars.extend(item.keys())
+                             else:
+                                 # String: direct variable name
+                                 target_vars.append(item)
+                     
+                     for var_name in target_vars:
+                         item_result[var_name] = memory.get_variable(var_name)
+                     logger.info(f"loop collected item result (with set_variables): {item_result}")
+                     results.append(item_result)
+                 else:
+                     # Default: collect the full result object
+                     result_var_name = f"{sub_tool_name}_result"
+                     val = memory.get_variable(result_var_name)
+                     logger.info(f"loop collected tool result: {result_var_name}={val} (type: {type(val)})")
+                     results.append(val)
+                 
+                 # Clear the tool result for next iteration to prevent stale data if next call fails
+                 # (Though execute_use_tool usually overwrites or errors)
+                 if f"{sub_tool_name}_result" in memory.variables:
+                      pass # Actually memory.set_variable doesn't easily support delete, just overwrite is fine.
+            elif subaction.get('action') == 'set_variable':
+                 var_name = subaction.get('variable')
+                 val = memory.get_variable(var_name)
+                 results.append(val)
+            elif subaction.get('action') == 'fetch_with_message' or subaction.get('action') == 'fetch':
+                 # For fetch, we can check the field
+                 field = subaction.get('field')
+                 if field:
+                     val = memory.get_variable(field)
+                     results.append(val)
+                 else:
+                     # Fallback
+                     results.append(None)
+            else:
+                 results.append(None)
+        
+        # Restore context key
+        memory.context_key = old_context
+        
+        # For loop_steps, we just append None or could collect a summary
+        # The individual steps will have set their own variables in memory
+        if loop_steps:
+            results.append(None)  # Or could collect a summary dict if needed
     
     # Restore original variable if it existed
     if original_val is not None:
         memory.set_variable(loop_variable_name, original_val)
         
     # Store aggregated results
-    logger.info(f"loop completed: collected {len(results)} results, storing in {set_variable_name}")
-    memory.set_variable(set_variable_name, results)
+    if set_variable_name:
+        logger.info(f"loop completed: collected {len(results)} results, storing in {set_variable_name}")
+        memory.set_variable(set_variable_name, results)
+    else:
+        logger.info(f"loop completed: collected {len(results)} results (not stored)")
     
     return StepExecutionResult("completed")

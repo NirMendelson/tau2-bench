@@ -1,4 +1,7 @@
 import re
+import json
+import datetime
+from pydantic import BaseModel
 
 
 class MemoryManager:
@@ -12,18 +15,33 @@ class MemoryManager:
         self.step_id = None
         self.current_workflow = None
         self.stack = []  # Stack of execution frames: {"steps": [], "index": 0, "name": "..."}
+        self.context_key = None
 
     def get_variable(self, name):
-        """Retrieves a variable value from memory."""
+        """Retrieves a variable value from memory. Checks context first if set."""
+        if self.context_key and self.context_key in self.variables:
+            context_data = self.variables[self.context_key]
+            if isinstance(context_data, dict) and name in context_data:
+                return context_data[name]
         return self.variables.get(name)
 
     def set_variable(self, name, value):
-        """Stores a variable value in memory."""
+        """Stores a variable value in memory. Also nests it if context_key is set."""
+        if self.context_key:
+            # Create context dict if it doesn't exist or isn't a dict
+            if self.context_key not in self.variables or not isinstance(self.variables[self.context_key], dict):
+                # Don't overwrite if the context key itself is already a meaningful string/value
+                # unless we are transforming it into a data container
+                self.variables[self.context_key] = {"_val": self.variables.get(self.context_key)}
+            
+            self.variables[self.context_key][name] = value
+            
         self.variables[name] = value
 
     def set_variables(self, variables_dict):
         """Stores multiple variables at once from a dictionary."""
-        self.variables.update(variables_dict)
+        for name, value in variables_dict.items():
+            self.set_variable(name, value)
 
     def add_to_history(self, role, content):
         """Adds a message to the conversation history."""
@@ -66,10 +84,18 @@ class MemoryManager:
             
         # Start with the root variable
         root_var = parts[0].strip()
-        if root_var not in self.variables:
-            return None
-            
-        val = self.variables[root_var]
+        
+        # Resolve initial value - check context first
+        val = None
+        if self.context_key and self.context_key in self.variables:
+            context_data = self.variables[self.context_key]
+            if isinstance(context_data, dict) and root_var in context_data:
+                val = context_data[root_var]
+        
+        if val is None:
+            if root_var not in self.variables:
+                return None
+            val = self.variables[root_var]
         
         for part in parts[1:]:
             part = part.strip()
@@ -141,6 +167,22 @@ class MemoryManager:
         # Match {{ variable_name }} patterns for general string substitution
         pattern = r'\{\{\s*([^}]+)\s*\}\}'
         return re.sub(pattern, replace_var, text)
+
+    def get_variables_as_json(self):
+        """Returns the variables formatted as a JSON string, handling Pydantic models and dates."""
+        def serialize(obj):
+            if isinstance(obj, BaseModel):
+                return obj.model_dump()
+            if isinstance(obj, (datetime.date, datetime.datetime)):
+                return obj.isoformat()
+            if isinstance(obj, list):
+                return [serialize(item) for item in obj]
+            if isinstance(obj, dict):
+                return {k: serialize(v) for k, v in obj.items()}
+            return obj
+
+        serialized_vars = serialize(self.variables)
+        return json.dumps(serialized_vars, indent=2)
 
     def get_state(self):
         """Returns the complete memory state as a dictionary."""

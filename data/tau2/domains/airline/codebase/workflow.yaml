@@ -1131,7 +1131,6 @@ examples:
 
 steps:
   # Step 1: Get user ID and reservation ID
-  # Step 1: Get user ID and reservation ID
   - id: fetch_user_id
     action: fetch
     field: user_id
@@ -1145,160 +1144,180 @@ steps:
         - id: find_reservation_subworkflow
           action: use_subworkflow
           subworkflow: FindReservationId
-  
-  # Step 2: Get cancellation reason
-  - id: fetch_cancellation_reason
-    action: fetch_with_message
-    field: cancellation_reason
-    message: |
-      What is the reason for cancellation? Change of plan / Airline cancelled flight / Other reasons. Please specify the reason.
-  
-  # Step 3: Get reservation details to extract flight information
-  - id: get_reservation_details
-    action: use_tool
-    tool_name: get_reservation_details
-    input: ["{{ reservation_id }}"]
-    set_variables:
-      - flights
-      - created_at
-      - cabin
-      - insurance
-  
-  # Step 4: Loop over flights to collect statuses
-  - id: collect_flight_statuses
-    action: loop
-    loop_over: "{{ flights }}"
-    loop_variable: flight
-    set_variable: flight_status_list
-    subaction:
-      action: use_tool
-      tool_name: get_flight_status
-      input: ["{{ flight.flight_number }}", "{{ flight.date }}"]
-  
-  # Step 5: Check if any flight is cancelled or landed
-  - id: check_invalid_status
+
+  - id: check_reservation_count
     action: conditional
-    condition: "{flight_status_list} contains cancelled or landed"
+    condition: "{len(reservations_id)} > 0"
     then:
       steps:
-        - id: inform_invalid_flight_status
+        - id: inform_one_by_one_reservation
           action: reply
-          message: "I'm sorry, but flights that are cancelled or have already landed cannot be cancelled."
-    else:
-      steps:
-        # Step 7: Check cancellation eligibility conditions
-        - id: check_booking_within_24hr
+          message: "We will handle the cancellation one by one. and will start with {{ reservations_id[0] }} ok?"
+
+        - id: parse_reservation_id
           action: instruction
           instruction: |
-            Check if the reservation was created within the last 24 hours.
-            
-            Steps:
-            1. Get the created_at timestamp (format: YYYY-MM-DDTHH:MM:SS)
-            2. Get today_date from memory (format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
-            3. Calculate the time difference between today_date and reservation_created_at
-            4. If the difference is less than 24 hours, set booking_within_24hr to true, else false
-            
-            Note: You may need to parse the datetime strings and calculate hours difference.
-            Set booking_within_24hr variable to true or false.
-          set_variable: booking_within_24hr
-        
-        # Step 9: Check if cabin is business
-        - id: check_business_cabin
-          action: conditional
-          condition: "{cabin} = business"
-          then:
-            steps:
-              - id: set_business_cabin_true
-                action: set_variable
-                variable: cabin_is_business
-                value: true
-          else:
-            steps:
-              - id: set_business_cabin_false
-                action: set_variable
-                variable: cabin_is_business
-                value: false
-        
-        # Step 10: Check if insurance is yes
-        - id: check_insurance
-          action: conditional
-          condition: "{insurance} = yes"
-          then:
-            steps:
-              - id: set_insurance_true
-                action: set_variable
-                variable: has_insurance
-                value: true
-          else:
-            steps:
-              - id: set_insurance_false
-                action: set_variable
-                variable: has_insurance
-                value: false
-        
-        # Step 11: Check if at least one cancellation condition is met
-        - id: check_cancellation_eligibility
-          action: instruction
-          instruction: |
-            Check if at least one of the following conditions is true:
-            1. booking_within_24hr is true
-            2. flight_is_cancelled is true
-            3. cabin_is_business is true
-            4. has_insurance is true
-            
-            If at least one is true, set can_cancel to true, else set can_cancel to false.
-          set_variable: can_cancel
-        
-        # Step 12: Check if cancellation is allowed
-        - id: check_if_can_cancel
-          action: conditional
-          condition: "{can_cancel} = true"
-          then:
-            steps:
-              # Step 13: Ask for confirmation
-              - id: ask_confirmation
-                action: fetch_with_message
-                field: cancellation_confirmed
-                message: |
-                  I can help you cancel your reservation {{ reservation_id }}.
-                  
-                  The refund will go to the original payment methods within 5 to 7 business days.
-                  
-                  Please confirm that you want to proceed with the cancellation by typing 'yes' or 'no'.
+            Parse the reservation_id into this format: ['reservation_id', 'reservation_id', 'reservation_id'] and set the variable reservation_id_list to the list.
+          set_variable: reservation_id_list
+
+  - id: loop_over_reservations
+    action: loop
+    loop_over: reservation_id_list
+    loop_variable: reservation_id
+    loop_steps:
+    # Step 2: Get cancellation reason
+    - id: fetch_cancellation_reason
+      action: fetch_with_message
+      field: cancellation_reason
+      message: |
+        What is the reason for cancellation? Change of plan / Airline cancelled flight / Other reasons. Please specify the reason.
+    
+    # Step 3: Get reservation details to extract flight information
+    - id: get_reservation_details
+      action: use_tool
+      tool_name: get_reservation_details
+      input: ["{{ reservation_id }}"]
+      set_variables:
+        - flights
+        - created_at
+        - cabin
+        - insurance
+    
+    # Step 4: Loop over flights to collect statuses
+    - id: collect_flight_statuses
+      action: loop
+      loop_over: "{{ flights }}"
+      loop_variable: flight
+      set_variable: flight_status_list
+      subaction:
+        action: use_tool
+        tool_name: get_flight_status
+        input: ["{{ flight.flight_number }}", "{{ flight.date }}"]
+    
+    # Step 5: Check if any flight is cancelled or landed
+    - id: check_invalid_status
+      action: conditional
+      condition: "{flight_status_list} contains cancelled or landed"
+      then:
+        steps:
+          - id: inform_invalid_flight_status
+            action: reply
+            message: "I'm sorry, but flights that are cancelled or have already landed cannot be cancelled."
+      else:
+        steps:
+          # Step 7: Check cancellation eligibility conditions
+          - id: check_booking_within_24hr
+            action: instruction
+            instruction: |
+              Check if the reservation was created within the last 24 hours.
               
-              # Step 14: Check confirmation and cancel
-              - id: check_confirmation
-                action: conditional
-                condition: "{cancellation_confirmed} = yes"
-                then:
-                  steps:
-                    - id: cancel_reservation
-                      action: use_tool
-                      tool_name: cancel_reservation
-                      input: ["{{ reservation_id }}"]
+              Steps:
+              1. Get the created_at timestamp (format: YYYY-MM-DDTHH:MM:SS)
+              2. Get today_date from memory (format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
+              3. Calculate the time difference between today_date and reservation_created_at
+              4. If the difference is less than 24 hours, set booking_within_24hr to true, else false
+              
+              Note: You may need to parse the datetime strings and calculate hours difference.
+              Set booking_within_24hr variable to true or false.
+            set_variable: booking_within_24hr
+          
+          # Step 9: Check if cabin is business
+          - id: check_business_cabin
+            action: conditional
+            condition: "{cabin} = business"
+            then:
+              steps:
+                - id: set_business_cabin_true
+                  action: set_variable
+                  variable: cabin_is_business
+                  value: true
+            else:
+              steps:
+                - id: set_business_cabin_false
+                  action: set_variable
+                  variable: cabin_is_business
+                  value: false
+          
+          # Step 10: Check if insurance is yes
+          - id: check_insurance
+            action: conditional
+            condition: "{insurance} = yes"
+            then:
+              steps:
+                - id: set_insurance_true
+                  action: set_variable
+                  variable: has_insurance
+                  value: true
+            else:
+              steps:
+                - id: set_insurance_false
+                  action: set_variable
+                  variable: has_insurance
+                  value: false
+          
+          # Step 11: Check if at least one cancellation condition is met
+          - id: check_cancellation_eligibility
+            action: instruction
+            instruction: |
+              Check if at least one of the following conditions is true:
+              1. booking_within_24hr is true
+              2. flight_is_cancelled is true
+              3. cabin_is_business is true
+              4. has_insurance is true
+              
+              If at least one is true, set can_cancel to true, else set can_cancel to false.
+            set_variable: can_cancel
+          
+          # Step 12: Check if cancellation is allowed
+          - id: check_if_can_cancel
+            action: conditional
+            condition: "{can_cancel} = true"
+            then:
+              steps:
+                # Step 13: Ask for confirmation
+                - id: ask_confirmation
+                  action: fetch_with_message
+                  field: cancellation_confirmed
+                  message: |
+                    I can help you cancel your reservation {{ reservation_id }}.
                     
-                    - id: confirm_cancellation
-                      action: reply
-                      message: "Your reservation {{ reservation_id }} has been successfully cancelled. The refund will be processed to your original payment methods within 5 to 7 business days."
-                else:
-                  steps:
-                    - id: inform_cancellation_cancelled
-                      action: reply
-                      message: "The cancellation has been cancelled. Your reservation remains active."
-          else:
-            steps:
-              - id: inform_cannot_cancel
-                action: reply
-                message: |
-                  I'm sorry, but your reservation cannot be cancelled at this time.
-                  
-                  Reservations can only be cancelled if at least one of the following conditions is met:
-                  - The booking was made within the last 24 hours
-                  - The flight status is cancelled
-                  - The cabin class is business
-                  - Travel insurance was purchased
-                  
-                  None of these conditions are currently met for your reservation.
+                    The refund will go to the original payment methods within 5 to 7 business days.
+                    
+                    Please confirm that you want to proceed with the cancellation by typing 'yes' or 'no'.
+                
+                # Step 14: Check confirmation and cancel
+                - id: check_confirmation
+                  action: conditional
+                  condition: "{cancellation_confirmed} = yes"
+                  then:
+                    steps:
+                      - id: cancel_reservation
+                        action: use_tool
+                        tool_name: cancel_reservation
+                        input: ["{{ reservation_id }}"]
+                      
+                      - id: confirm_cancellation
+                        action: reply
+                        message: "Your reservation {{ reservation_id }} has been successfully cancelled. The refund will be processed to your original payment methods within 5 to 7 business days."
+                  else:
+                    steps:
+                      - id: inform_cancellation_cancelled
+                        action: reply
+                        message: "The cancellation has been cancelled. Your reservation remains active."
+            else:
+              steps:
+                - id: inform_cannot_cancel
+                  action: reply
+                  message: |
+                    I'm sorry, but your reservation cannot be cancelled at this time.
+                    
+                    Reservations can only be cancelled if at least one of the following conditions is met:
+                    - The booking was made within the last 24 hours
+                    - The flight status is cancelled
+                    - The cabin class is business
+                    - Travel insurance was purchased
+                    
+                    None of these conditions are currently met for your reservation.
 
 
 ---
