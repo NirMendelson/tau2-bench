@@ -917,7 +917,7 @@ steps:
           action: reply
           message: "The flight date change has been cancelled. Your reservation remains unchanged."
 
-  
+---
 subworkflow: ModifyPassengersDetails
 when: "user wants to change passenger details in their reservation"
 
