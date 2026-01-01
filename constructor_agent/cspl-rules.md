@@ -135,3 +135,6 @@ Manually set a variable.
 ## Critical
 - id is distint inside the same workflow
 - only use fetch_with_message if you need to show a SPECIFIC message, fetch on default send a message if it doesn't have the information.
+- you can set name of a variable with this syntax (payment_id value goes to payment var)
+  set_variables:
+  - payment: payment_id

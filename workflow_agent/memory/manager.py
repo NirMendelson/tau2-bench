@@ -182,7 +182,7 @@ class MemoryManager:
             return obj
 
         serialized_vars = serialize(self.variables)
-        return json.dumps(serialized_vars, indent=2)
+        return json.dumps(serialized_vars, indent=2, ensure_ascii=False)
 
     def get_state(self):
         """Returns the complete memory state as a dictionary."""

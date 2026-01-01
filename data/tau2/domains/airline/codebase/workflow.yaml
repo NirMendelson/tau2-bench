@@ -28,8 +28,8 @@ steps:
       - trip_type
       - origin
       - destination
+    comment: origin and destination have to be 3 letter airport codes.
 
-  # Step 3: Get date
   - id: fetch_date
     action: fetch
     field: date
@@ -50,8 +50,8 @@ steps:
         - id: fetch_flight_preference
           action: fetch_with_condition
           field: flight_preference
-          condition: '{flight_preference} = direct only'
-          comment: Preference can be either 'direct' or 'one stop'.
+          condition: '{flight_preference} = direct'
+          comment: "there are 2 possible values: 'direct' or 'one stop'. Do Not Infer it from the conversation, you have to get this value explicitly from the user."
           then:
             steps:
               - id: search_direct_flights
@@ -69,7 +69,7 @@ steps:
             steps:
               - id: check_one_stop_only
                 action: conditional
-                condition: '{flight_preference} contains one stop only'
+                condition: '{flight_preference} = one stop'
                 then:
                   steps:
                     - id: search_onestop_flights
@@ -1120,12 +1120,12 @@ steps:
                   - The destination matches {{ destination }}
 
                   Return the reservation ID. If no match is found, return null.
-                set_variable: matching_reservation_id
+                set_variable: reservation_id
 
               # Step 5: Check if a match was found
               - id: check_match_found
                 action: conditional
-                condition: "{matching_reservation_id} = null"
+                condition: "{reservation_id} = null"
                 then:
                   steps:
                     - id: inform_no_match_found
@@ -1138,7 +1138,7 @@ steps:
                     - id: set_matched_reservation_id
                       action: set_variable
                       variable: reservation_id
-                      value: "{{ matching_reservation_id }}"
+                      value: "{{ reservation_id }}"
 
 
 ---
