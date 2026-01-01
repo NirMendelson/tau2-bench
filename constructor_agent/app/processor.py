@@ -24,7 +24,7 @@ class WorkflowProcessor:
     def get_document_by_name(self, name: str):
         """Find a workflow or subworkflow by its name."""
         for doc in self.documents:
-            if doc and (doc.get('workflow') == name or doc.get('subworkflow') == name):
+            if isinstance(doc, dict) and (doc.get('workflow') == name or doc.get('subworkflow') == name):
                 return doc
         return None
 
@@ -32,12 +32,12 @@ class WorkflowProcessor:
         """List all workflow and subworkflow names."""
         names = []
         for doc in self.documents:
-            if not doc:
+            if not isinstance(doc, dict):
                 continue
             if 'workflow' in doc:
-                names.append(f"workflow: {doc['workflow']}")
+                names.append(doc['workflow'])
             elif 'subworkflow' in doc:
-                names.append(f"subworkflow: {doc['subworkflow']}")
+                names.append(doc['subworkflow'])
         return names
 
     def get_full_content(self) -> str:

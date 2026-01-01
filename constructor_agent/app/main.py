@@ -4,6 +4,10 @@ from typing import List, Dict, Any, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from constructor_agent.app.agent import ConstructorAgent
 import os
+import sys
+import constructor_agent.app.agent as agent_module
+print(f"DEBUG: sys.path = {sys.path}")
+print(f"DEBUG: agent_module file = {agent_module.__file__}")
 
 app = FastAPI(title="Constructor Agent API")
 
