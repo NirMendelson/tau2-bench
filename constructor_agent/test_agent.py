@@ -18,7 +18,13 @@ def test():
     else:
         print(f"EXPLANATION: {result['explanation']}")
         if result.get('edits'):
-            print(f"Proposed edits to: {[e['name'] for e in result['edits']]}")
+            print(f"\nProposed {len(result['edits'])} edit(s):")
+            for i, edit in enumerate(result['edits'], 1):
+                print(f"\n  Edit {i}:")
+                print(f"    Workflow: {edit.get('workflow_name', 'unknown')}")
+                print(f"    Type: {edit.get('edit_type', 'unknown')}")
+                print(f"    Step ID: {edit.get('step_id', 'unknown')}")
+                print(f"    Reason: {edit.get('reason', 'N/A')}")
 
 if __name__ == "__main__":
     test()
