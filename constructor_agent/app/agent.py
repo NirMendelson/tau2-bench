@@ -47,7 +47,17 @@ Your process:
 5. `validate_proposed_workflow(workflow_name="BookFlight")`
 6. `submit_final_proposal(explanation="Added age validation step...", edits=[...])`
 
-**Example 2: Modifying a condition**
+**Example 2: Modifying a comment**
+User: "Add a comment about valid values in the flight preference step"
+Your process:
+1. `search_workflow_content(query="flight_preference", workflow_name="BookFlight")`
+   → Returns: step_id="fetch_flight_preference" (use THIS exact ID, not a parent step!)
+2. `read_workflow_step(workflow_name="BookFlight", step_id="fetch_flight_preference")`
+3. `propose_step_modification(workflow_name="BookFlight", step_id="fetch_flight_preference", modification_type="replace", new_step_content={{...with updated comment...}})`
+4. `validate_proposed_workflow(workflow_name="BookFlight")`
+5. `submit_final_proposal(...)`
+
+**Example 3: Modifying a condition**
 User: "Change the passenger limit from 5 to 10"
 Your process:
 1. `search_workflow_content(query="number_of_passengers")`
@@ -62,8 +72,10 @@ Your process:
 - ❌ NEVER delete steps unless explicitly asked
 - ❌ **NEVER pass YAML content as strings** - this corrupts formatting!
 - ❌ **NEVER call validate_proposed_workflow with 'content' parameter** - it only needs workflow_name!
+- ❌ **NEVER modify a parent step when you mean to modify a nested step** - use the EXACT step_id from search results!
 - ✅ ALWAYS search before reading
 - ✅ ALWAYS read before modifying
+- ✅ ALWAYS use the EXACT step_id returned by search_workflow_content
 - ✅ ALWAYS use `propose_step_modification` or `propose_step_insertion` to make changes
 - ✅ ALWAYS call `validate_proposed_workflow(workflow_name="X")` with ONLY the workflow name
 - ✅ ALWAYS validate before proposing

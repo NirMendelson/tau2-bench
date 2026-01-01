@@ -50,55 +50,63 @@ steps:
         - id: fetch_flight_preference
           action: fetch_with_condition
           field: flight_preference
-          condition: "{flight_preference} = direct only"
+          condition: '{flight_preference} = direct only'
+          comment: Preference can be either 'direct' or 'one stop'.
           then:
             steps:
-              # Search direct flights only
               - id: search_direct_flights
                 action: use_tool
                 tool_name: search_direct_flight
-                input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+                input:
+                  - '{{ origin }}'
+                  - '{{ destination }}'
+                  - '{{ date }}'
                 filter:
                   - field: available_seats.{{ cabin }}
                     operator: gte
-                    value: "{{ number_of_passengers }}"
+                    value: '{{ number_of_passengers }}'
           else:
             steps:
               - id: check_one_stop_only
                 action: conditional
-                condition: "{flight_preference} contains one stop only"
+                condition: '{flight_preference} contains one stop only'
                 then:
                   steps:
-                    # Search one-stop flights only
                     - id: search_onestop_flights
                       action: use_tool
                       tool_name: search_onestop_flight
-                      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+                      input:
+                        - '{{ origin }}'
+                        - '{{ destination }}'
+                        - '{{ date }}'
                       filter:
                         - field: available_seats.{{ cabin }}
                           operator: gte
-                          value: "{{ number_of_passengers }}"
+                          value: '{{ number_of_passengers }}'
                 else:
-                  # Search both direct and one-stop flights
                   steps:
                     - id: search_direct_flights
                       action: use_tool
                       tool_name: search_direct_flight
-                      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+                      input:
+                        - '{{ origin }}'
+                        - '{{ destination }}'
+                        - '{{ date }}'
                       filter:
                         - field: available_seats.{{ cabin }}
                           operator: gte
-                          value: "{{ number_of_passengers }}"
+                          value: '{{ number_of_passengers }}'
                     - id: search_onestop_flights
                       action: use_tool
                       tool_name: search_onestop_flight
-                      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+                      input:
+                        - '{{ origin }}'
+                        - '{{ destination }}'
+                        - '{{ date }}'
                       filter:
                         - field: available_seats.{{ cabin }}
                           operator: gte
-                          value: "{{ number_of_passengers }}"
-
-        # Step 8: Display flight results
+                          value: '{{ number_of_passengers }}'
         - id: display_flight_results
           action: conditional
           condition: "{flight_preference} = direct only"

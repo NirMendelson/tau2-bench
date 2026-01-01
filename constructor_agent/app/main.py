@@ -31,9 +31,9 @@ class ChatRequest(BaseModel):
     message: str
 
 class ChatResponse(BaseModel):
-    clarification: Optional[str]
-    explanation: Optional[str]
-    edits: Optional[List[Dict[str, Any]]]
+    clarification: Optional[str] = None
+    explanation: Optional[str] = None
+    edits: Optional[List[Dict[str, Any]]] = None
 
 class ApproveRequest(BaseModel):
     edits: List[Dict[str, Any]]

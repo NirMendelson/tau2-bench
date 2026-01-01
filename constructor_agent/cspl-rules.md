@@ -20,6 +20,7 @@ Each step MUST have:
 Used to get user information. Will check if it has the information in the conversation and if not will ask for it.
 - `field`: Name of the variable to store (e.g., `user_id`).
 - `fields`: (Alternative) List of variables to store.
+- 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
   - id: get_user
@@ -31,6 +32,7 @@ Used to get user information. Will check if it has the information in the conver
 Used to get user input and show a SPECIFIC message before getting it. 
 - `field`: Variable to store input.
 - `message`: The text to show the user.
+- 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
   - id: ask_insurance
@@ -44,6 +46,7 @@ Used when we need to check a condition and execute different steps based on it.
 - `condition`: String condition (e.g., `"{age} > 18"` or `"{name} = John"`).
 - `then`: Steps to execute if true.
 - `else`: Steps to execute if false.
+- 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
   - id: check_gold
@@ -60,6 +63,7 @@ Combines `fetch` and `conditional`, Fetching and then checking a condition.
 - `field`: Field to fetch.
 - `condition`: Condition evaluated AFTER fetching.
 - `then` / `else`: Branching steps.
+- 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
   - id: check_gold
@@ -75,14 +79,14 @@ Combines `fetch` and `conditional`, Fetching and then checking a condition.
 ### 5. `use_tool`
 Call a backend tool. 
 - `tool_name`: Name of the tool.
-- `input`: List of arguments (supports `{{ var }}`).
+- `input`: List of arguments ["{{ var }}", "{{ vars }}"].
 - `set_variables`: (Optional) List of fields to extract from tool output. If not specified, we will set all of the variables the tool returns.
 - **Example**:
   ```yaml
     - id: get_reservation_details
       action: use_tool
       tool_name: get_reservation_details
-      input: ["{{ reservation_id }}"]
+      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
       set_variables:
         - total_baggages
         - nonfree_baggages
@@ -93,6 +97,7 @@ Call a backend tool.
 ### 6. `reply`
 Send a message to the user .
 - `message`: Text to send.
+- 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
     - id: inform_max_passengers
