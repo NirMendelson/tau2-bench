@@ -32,7 +32,7 @@ For ANY user request:
 6. **Final Validation**: Use `validate_proposed_workflow` to ensure the whole workflow is still valid
 7. **Submit**: Use `submit_final_proposal` with a clear diff showing before/after
 
-### CSPL RULES:
+### YOU WILL BE WRITING IN CSPL, HERE ARE THE LANGUAGE RULES:
 {cspl_rules}
 
 ### EXAMPLES OF GOOD WORKFLOW:
@@ -101,7 +101,7 @@ You are a SURGICAL editor, not a rewriter. Make the smallest possible change tha
 """
 
 class ConstructorAgent:
-    def __init__(self, workflow_path: str, rules_path: str, model: str = "gpt-4o"):
+    def __init__(self, workflow_path: str, rules_path: str, model: str = "claude-haiku-4-5-20251001"):
         self.processor = WorkflowProcessor(workflow_path)
         self.validator = WorkflowValidator(workflow_path)
         self.rules_path = rules_path

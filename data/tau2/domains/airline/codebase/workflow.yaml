@@ -17,6 +17,43 @@ examples:
 
 steps:
   # Step 1: Get user ID
+  - id: check_existing_flight
+    action: conditional
+    condition: '{user_wants_same__as_previous_flight} = yes'
+    then:
+      steps:
+        - id: find_reservation_id
+          action: use_subworkflow
+          subworkflow: FindReservationId
+        - id: get_reservation_details
+          action: use_tool
+          tool_name: get_reservation_details
+          input:
+            - '{{ reservation_id }}'
+          set_variables:
+            - cabin
+            - flights
+        - id: check_flight_connections
+          action: conditional
+          condition: '{number_of_flights} = 2'
+          then:
+            steps:
+              - id: set_direct_flight_preference
+                action: set_variable
+                variable: flight_preference
+                value: direct
+          else:
+            steps:
+              - id: check_one_stop_connection
+                action: conditional
+                condition: '{number_of_flights} = 4'
+                then:
+                  steps:
+                    - id: set_one_stop_flight_preference
+                      action: set_variable
+                      variable: flight_preference
+                      value: one stop
+
   - id: fetch_user_id
     action: fetch
     field: user_id
@@ -51,7 +88,9 @@ steps:
           action: fetch_with_condition
           field: flight_preference
           condition: '{flight_preference} = direct'
-          comment: "there are 2 possible values: 'direct' or 'one stop'. Do Not Infer it from the conversation, you have to get this value explicitly from the user."
+          comment: "there are 2 possible values: 'direct' or 'one stop'. Do Not Infer
+            it from the conversation, you have to get this value explicitly from the
+            user."
           then:
             steps:
               - id: search_direct_flights

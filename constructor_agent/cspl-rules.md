@@ -6,7 +6,6 @@
 - **Subworkflow**: Starts with `subworkflow: Name`.
 - Both must have `when: "description of when to use"`.
 - `steps`: A list of action objects that define the process.
-
 workflow can be choosen by user input, subworkflows are like helper function that are called by the main workflow.
 
 ## Step Fields
@@ -133,8 +132,11 @@ Manually set a variable.
 - **Natural Language**: Conditions can also be natural language strings which the LLM will evaluate.
 
 ## Critical
-- id is distint inside the same workflow
 - only use fetch_with_message if you need to show a SPECIFIC message, fetch on default send a message if it doesn't have the information.
 - you can set name of a variable with this syntax (payment_id value goes to payment var)
   set_variables:
   - payment: payment_id
+- `else` blocks are OPTIONAL. If no `else` block is provided, execution continues to the next sequential step. Only add an `else` block if you need different logic than what follows naturally
+
+## DO NOT DO
+- else: []
