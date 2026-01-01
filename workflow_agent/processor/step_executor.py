@@ -830,8 +830,15 @@ def execute_step(step, memory, conversation, tone_text, llm_model, tools, workfl
     # Handle automatic branching if result has a condition (for loops/recursive calls)
     if result.status == "completed" and hasattr(result, 'result') and result.result and 'condition' in result.result:
         is_true = result.result['condition']
-        branch_block = step.get('then' if is_true else 'else') or {}
-        branch_steps = branch_block.get('steps', [branch_block] if ('id' in branch_block or 'action' in branch_block) else [])
+        branch_block = step.get('then' if is_true else 'else')
+        branch_steps = []
+        if isinstance(branch_block, list):
+            branch_steps = branch_block
+        elif isinstance(branch_block, dict):
+            if 'steps' in branch_block:
+                branch_steps = branch_block['steps']
+            elif 'id' in branch_block or 'action' in branch_block:
+                branch_steps = [branch_block]
         
         if branch_steps:
             # Recursively execute branch steps
@@ -899,14 +906,23 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools, workfl
                 # Handle Subworkflow manually inside loops
                 if sub_step.get('action') == 'use_subworkflow':
                     sub_name = sub_step.get('subworkflow')
-                    sub_wf_obj = next((w for w in workflows if w.get('subworkflow') == sub_name), None)
-                    if sub_wf_obj and 'steps' in sub_wf_obj:
-                        for s_step in sub_wf_obj['steps']:
+                    # Find subworkflow by searching first object of each list
+                    sub_steps = []
+                    for w in workflows:
+                        if isinstance(w, list) and len(w) > 0 and w[0].get('subworkflow') == sub_name:
+                            sub_steps = w[1:]
+                            break
+                        elif isinstance(w, dict) and w.get('subworkflow') == sub_name:
+                            sub_steps = w.get('steps', [])
+                            break
+                    
+                    if sub_steps:
+                        for s_step in sub_steps:
                             s_result = execute_step(s_step, memory, conversation, tone_text, llm_model, tools, workflows)
                             if s_result.status != "completed":
                                 return s_result
                     else:
-                        logger.error(f"Subworkflow {sub_name} not found in loop")
+                        logger.error(f"Subworkflow {sub_name} not found or empty in loop")
                 
                 if result.status == "failed":
                     logger.error(f"Loop step {sub_step.get('id', 'unknown')} failed for item {item}: {result.message}")

@@ -23,9 +23,22 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
     
     # We should filter out subworkflows from matching candidates
     # "the agent cannot choose this workflow [subworkflow]"
-    candidate_workflows = [w for w in workflows if 'subworkflow' not in w]
+    # With the new format, workflows are lists of objects. Metadata is in the first object.
+    candidate_workflows = []
+    for w in workflows:
+        if isinstance(w, list) and len(w) > 0:
+            metadata = w[0]
+            if 'subworkflow' not in metadata:
+                # Construct a compatible object for the matcher
+                wf_match_obj = metadata.copy()
+                wf_match_obj['full_wf'] = w # Keep reference to full list
+                candidate_workflows.append(wf_match_obj)
+        elif isinstance(w, dict):
+            # Fallback for old format if any exist
+            if 'subworkflow' not in w:
+                candidate_workflows.append(w)
     
-    matched_workflow = matcher.match_workflow(
+    matched_metadata = matcher.match_workflow(
         memory.get_history(), 
         candidate_workflows, 
         tone_text, 
@@ -41,8 +54,8 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
     # Get current root workflow name
     current_root = memory.workflow_name
     
-    if matched_workflow:
-        new_wf_name = matched_workflow['workflow']
+    if matched_metadata:
+        new_wf_name = matched_metadata['workflow']
         if new_wf_name != current_root:
             # Switch workflow!
             memory.reset_workflow_state()
@@ -50,7 +63,13 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
             memory.stack = [] # Clear stack
             
             # Push initial frame
-            initial_steps = matched_workflow.get('steps', [])
+            # Metadata is in the first object, steps are subsequent objects
+            full_wf = matched_metadata.get('full_wf')
+            if full_wf and isinstance(full_wf, list):
+                initial_steps = full_wf[1:]
+            else:
+                initial_steps = matched_metadata.get('steps', [])
+                
             memory.stack.append({
                 "steps": initial_steps,
                 "index": 0,
@@ -128,17 +147,25 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
                 # Push new frame based on result
                 branch_steps = []
                 if cond_true:
-                    then_block = current_step.get('then') or {}
-                    if 'steps' in then_block:
-                        branch_steps = then_block['steps']
-                    elif 'id' in then_block or 'action' in then_block:
-                        branch_steps = [then_block]
+                    then_block = current_step.get('then') or []
+                    if isinstance(then_block, list):
+                        branch_steps = then_block
+                    elif isinstance(then_block, dict):
+                        if 'steps' in then_block:
+                            branch_steps = then_block['steps']
+                        else:
+                            # Single step
+                            branch_steps = [then_block]
                 else:
-                    else_block = current_step.get('else') or {}
-                    if 'steps' in else_block:
-                        branch_steps = else_block['steps']
-                    elif 'id' in else_block or 'action' in else_block:
-                        branch_steps = [else_block]
+                    else_block = current_step.get('else') or []
+                    if isinstance(else_block, list):
+                        branch_steps = else_block
+                    elif isinstance(else_block, dict):
+                        if 'steps' in else_block:
+                            branch_steps = else_block['steps']
+                        else:
+                            # Single step
+                            branch_steps = [else_block]
                 
                 # If we have steps to execute, push them
                 if branch_steps:
@@ -153,11 +180,25 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
             # 2. Subworkflow
             elif current_step.get('action') == 'use_subworkflow':
                 sub_name = current_step.get('subworkflow')
-                sub_wf_obj = next((w for w in workflows if w.get('subworkflow') == sub_name), None)
+                # Find subworkflow by searching first object of each list
+                sub_wf_list = None
+                for w in workflows:
+                    if isinstance(w, list) and len(w) > 0 and w[0].get('subworkflow') == sub_name:
+                        sub_wf_list = w
+                        break
+                    elif isinstance(w, dict) and w.get('subworkflow') == sub_name:
+                        # Fallback for old format
+                        sub_wf_list = w
+                        break
                 
-                if sub_wf_obj and 'steps' in sub_wf_obj:
+                if sub_wf_list:
+                    if isinstance(sub_wf_list, list):
+                        sub_steps = sub_wf_list[1:]
+                    else:
+                        sub_steps = sub_wf_list.get('steps', [])
+                        
                     memory.stack.append({
-                        "steps": sub_wf_obj['steps'],
+                        "steps": sub_steps,
                         "index": 0,
                         "name": sub_name
                     })

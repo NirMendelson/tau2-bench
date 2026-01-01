@@ -69,13 +69,22 @@ def find_all_tool_calls(workflow_data: Dict[str, Any], file_lines: Optional[List
                     if isinstance(nested, list):
                         traverse_steps(nested, f"{path}.{step_id}.{key}")
                     elif isinstance(nested, dict):
-                        # Handle case where 'then' directly contains a step (not wrapped in 'steps')
-                        traverse_steps([nested], f"{path}.{step_id}.{key}")
+                        # Handle case where 'then' directly contains a step (not wrapped in 'steps') or old format
+                        if 'steps' in nested:
+                             traverse_steps(nested['steps'], f"{path}.{step_id}.{key}.steps")
+                        else:
+                             traverse_steps([nested], f"{path}.{step_id}.{key}")
     
-    # Handle both 'workflow' and 'subworkflow' top-level keys
-    if 'steps' in workflow_data:
-        traverse_steps(workflow_data['steps'], 
-                      workflow_data.get('workflow') or workflow_data.get('subworkflow', 'root'))
+    # Handle the new list-based format or old dict-based format
+    if isinstance(workflow_data, list) and len(workflow_data) > 0:
+        metadata = workflow_data[0]
+        wf_name = metadata.get('workflow') or metadata.get('subworkflow', 'root')
+        # Steps are from index 1 onwards
+        traverse_steps(workflow_data[1:], wf_name)
+    elif isinstance(workflow_data, dict):
+        if 'steps' in workflow_data:
+            traverse_steps(workflow_data['steps'], 
+                          workflow_data.get('workflow') or workflow_data.get('subworkflow', 'root'))
     
     return tool_calls
 

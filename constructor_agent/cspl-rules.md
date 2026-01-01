@@ -2,11 +2,12 @@
 
 ## General Structure
 - A file contains multiple workflows/subworkflows separated by `---`.
-- **Main Workflow**: Starts with `workflow: Name`.
-- **Subworkflow**: Starts with `subworkflow: Name`.
-- Both must have `when: "description of when to use"`.
-- `steps`: A list of action objects that define the process.
-workflow can be choosen by user input, subworkflows are like helper function that are called by the main workflow.
+- Each workflow is a **list of objects**.
+- The **first object** in the list defines the workflow metadata:
+  - **Main Workflow**: `workflow: Name`.
+  - **Subworkflow**: `subworkflow: Name`.
+  - Both must have `when: "description of when to use"`.
+- The **subsequent objects** in the list are the steps that define the process.
 
 ## Step Fields
 Each step MUST have:
@@ -22,6 +23,8 @@ Used to get user information. Will check if it has the information in the conver
 - 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
+  - workflow: Example
+    when: "..."
   - id: get_user
     action: fetch
     field: user_id
@@ -43,8 +46,8 @@ Used to get user input and show a SPECIFIC message before getting it.
 ### 3. `conditional`
 Used when we need to check a condition and execute different steps based on it.
 - `condition`: String condition (e.g., `"{age} > 18"` or `"{name} = John"`).
-- `then`: Steps to execute if true.
-- `else`: Steps to execute if false.
+- `then`: List of steps to execute if true.
+- `else`: List of steps to execute if false.
 - 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
@@ -52,16 +55,18 @@ Used when we need to check a condition and execute different steps based on it.
     action: conditional
     condition: "{membership} = gold"
     then:
-      steps: [...]
+      - id: apply_discount
+        action: ...
     else:
-      steps: [...]
+      - id: show_regular_price
+        action: ...
   ```
 
 ### 4. `fetch_with_condition`
 Combines `fetch` and `conditional`, Fetching and then checking a condition.
 - `field`: Field to fetch.
 - `condition`: Condition evaluated AFTER fetching.
-- `then` / `else`: Branching steps.
+- `then` / `else`: List of branching steps.
 - 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
@@ -70,9 +75,9 @@ Combines `fetch` and `conditional`, Fetching and then checking a condition.
     field: membership
     condition: "{membership} = gold"
     then:
-      steps: [...]
+      - id: ...
     else:
-      steps: [...]
+      - id: ...
   ```
 
 ### 5. `use_tool`
@@ -82,15 +87,15 @@ Call a backend tool.
 - `set_variables`: (Optional) List of fields to extract from tool output. If not specified, we will set all of the variables the tool returns.
 - **Example**:
   ```yaml
-    - id: get_reservation_details
-      action: use_tool
-      tool_name: get_reservation_details
-      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
-      set_variables:
-        - total_baggages
-        - nonfree_baggages
-        - cabin
-        - passengers
+  - id: get_reservation_details
+    action: use_tool
+    tool_name: get_reservation_details
+    input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+    set_variables:
+      - total_baggages
+      - nonfree_baggages
+      - cabin
+      - passengers
   ```
 
 ### 6. `reply`
@@ -99,9 +104,9 @@ Send a message to the user .
 - 'comment': (Optional) comment to enter the prompt, can be additional rules or instructions.
 - **Example**:
   ```yaml
-    - id: inform_max_passengers
-      action: reply
-      message: "Each reservation can have at most five passengers. "
+  - id: inform_max_passengers
+    action: reply
+    message: "Each reservation can have at most five passengers. "
   ```
 
 ### 7. `use_subworkflow`
@@ -109,9 +114,9 @@ Jump to a subworkflow.
 - `subworkflow`: Name of the subworkflow to call.
 - **Example**:
   ```yaml
-    - id: calculate_free_bags
-      action: use_subworkflow
-      subworkflow: GivingCheckedBagInformation
+  - id: calculate_free_bags
+    action: use_subworkflow
+    subworkflow: GivingCheckedBagInformation
   ```
 ### 8. `set_variable`
 Manually set a variable.
@@ -119,10 +124,10 @@ Manually set a variable.
 - `value`: Value to set (can use `{{ var }}`).
 - **Example**:
   ```yaml
-    - id: set_free_bags
-      action: set_variable
-      variable: free_checked_bags_per_passenger
-      value: 0
+  - id: set_free_bags
+    action: set_variable
+    variable: free_checked_bags_per_passenger
+    value: 0
   ```
 
 ## Logic & Template Rules

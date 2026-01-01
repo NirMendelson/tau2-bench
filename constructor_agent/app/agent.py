@@ -42,8 +42,8 @@ User: "Add age validation after fetching user_id in BookFlight"
 Your process:
 1. `search_workflow_content(query="fetch_user_id", workflow_name="BookFlight")`
 2. `read_workflow_step(workflow_name="BookFlight", step_id="fetch_user_id")`
-3. `validate_step(step_content={{...new step...}})`
-4. `propose_step_insertion(workflow_name="BookFlight", position={{type: "after", reference: "fetch_user_id"}}, new_step={{...}})`
+3. `validate_step(step_content={"id": "check_age", "action": "conditional", "condition": "user.age < 18", "then": [{"id": "deny_booking", "action": "reply", "message": "Sorry, you must be 18 or older."}]})`
+4. `propose_step_insertion(workflow_name="BookFlight", position={"type": "after", "reference": "fetch_user_id"}, new_step={"id": "check_age", "action": "conditional", "condition": "user.age < 18", "then": [{"id": "deny_booking", "action": "reply", "message": "Sorry, you must be 18 or older."}]})`
 5. `validate_proposed_workflow(workflow_name="BookFlight")`
 6. `submit_final_proposal(explanation="Added age validation step...", edits=[...])`
 
@@ -57,16 +57,17 @@ Your process:
 4. `validate_proposed_workflow(workflow_name="BookFlight")`
 5. `submit_final_proposal(...)`
 
-**Example 3: Modifying a condition**
-User: "Change the passenger limit from 5 to 10"
+**Example 3: Modifying a condition branch**
+User: "Add a log step to the then branch of membership check"
 Your process:
-1. `search_workflow_content(query="number_of_passengers")`
-2. `read_workflow_step(workflow_name="BookFlight", step_id="fetch_number_of_passengers")`
-3. `propose_step_modification(workflow_name="BookFlight", step_id="fetch_number_of_passengers", modification_type="replace", new_step_content={{...}})`
+1. `search_workflow_content(query="membership")`
+2. `read_workflow_step(workflow_name="BookFlight", step_id="check_membership")`
+3. `propose_step_modification(workflow_name="BookFlight", step_id="check_membership", modification_type="replace", new_step_content={"id": "check_membership", "action": "conditional", "condition": "user.is_member", "then": [{"id": "log_gold", "action": "log", "message": "Gold member detected"}, {"id": "offer_discount", "action": "reply", "message": "Here's your member discount!"}], "else": [{"id": "offer_signup", "action": "reply", "message": "Join our membership program!"}]})`
 4. `validate_proposed_workflow(workflow_name="BookFlight")`
 5. `submit_final_proposal(...)`
 
 ### CRITICAL RULES:
+- ❌ NEVER use 'steps:' key for branches or top-level workflows. Steps are direct lists.
 - ❌ NEVER call `read_workflow` for the entire workflow unless you need to see the full structure
 - ❌ NEVER propose changes without validating first
 - ❌ NEVER delete steps unless explicitly asked
