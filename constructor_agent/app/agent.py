@@ -291,8 +291,10 @@ class ConstructorAgent:
 
     def process_request(self, user_instruction: str) -> Dict[str, Any]:
         """Runs the agentic loop to handle the user instruction."""
+        # Use replace instead of format to avoid issues with curly braces in rules
+        system_content = SYSTEM_PROMPT.replace("{cspl_rules}", self.rules)
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT.format(cspl_rules=self.rules)},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": user_instruction}
         ]
         

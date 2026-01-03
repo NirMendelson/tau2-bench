@@ -81,7 +81,7 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
     target_fields = fields if fields else [field]
     
     # Check which fields are missing from memory
-    missing_fields = [f for f in target_fields if not memory.get_variable(f)]
+    missing_fields = [f for f in target_fields if memory.get_variable(f) is None]
     
     # If all fields are found, we're done
     if not missing_fields:
@@ -138,7 +138,7 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
                     memory.set_variable(field_name, fields_data[field_name])
             
             # Check if we now have all fields
-            still_missing = [f for f in target_fields if not memory.get_variable(f)]
+            still_missing = [f for f in target_fields if memory.get_variable(f) is None]
             
             if not still_missing:
                 # All fields found - we're done
@@ -167,7 +167,11 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
             # Single field response format (backward compatible)
             if result.get('found'):
                 memory.set_variable(target_fields[0], result.get('value'))
-                # Recursively check if we have more missing fields (for backward compatibility)
+                # After setting, check if we should continue
+                if memory.get_variable(target_fields[0]) is not None:
+                     # For single field fetch, if we found it, we might be done or need to check next segment
+                     # But most importantly, don't recurse if the value is just Falsy
+                     return StepExecutionResult("completed")
                 return execute_fetch(step, memory, conversation, tone_text, llm_model)
             else:
                 return _create_result_with_blocking_check("fetch", result.get('question'), memory)
@@ -252,7 +256,7 @@ def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
     target_fields = fields if fields else [field]
     
     # Check which fields are missing from memory
-    missing_fields = [f for f in target_fields if not memory.get_variable(f)]
+    missing_fields = [f for f in target_fields if memory.get_variable(f) is None]
     
     # If all fields are found, we're done
     if not missing_fields:
@@ -303,7 +307,7 @@ def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
                     memory.set_variable(field_name, fields_data[field_name])
             
             # Check if we now have all fields
-            still_missing = [f for f in target_fields if not memory.get_variable(f)]
+            still_missing = [f for f in target_fields if memory.get_variable(f) is None]
             
             if not still_missing:
                 # All fields found - we're done
@@ -738,6 +742,8 @@ def execute_use_tool(step, memory, tools, llm_model):
         
         # Helper function to extract value from result
         def get_value_from_result(source_name):
+            if source_name == 'result':
+                return result
             if isinstance(result, dict):
                 return result.get(source_name)
             elif hasattr(result, source_name):

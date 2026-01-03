@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from constructor_agent.app.agent import ConstructorAgent
 import os
 import sys
+import traceback
 import constructor_agent.app.agent as agent_module
 print(f"DEBUG: sys.path = {sys.path}")
 print(f"DEBUG: agent_module file = {agent_module.__file__}")
@@ -48,6 +49,9 @@ async def chat(request: ChatRequest):
         result = agent.process_request(request.message)
         return result
     except Exception as e:
+        error_traceback = traceback.format_exc()
+        print(f"ERROR in /chat endpoint: {str(e)}")
+        print(f"Traceback:\n{error_traceback}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/approve", response_model=ApproveResponse)
