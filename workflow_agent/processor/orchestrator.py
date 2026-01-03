@@ -93,9 +93,32 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
         if index >= len(steps):
             # Frame is complete - pop it and continue with parent frame
             popped_frame = memory.stack.pop()
-            # If we popped a branch frame (indicated by name containing '_condition' or being a subworkflow)
-            # and there's still a parent frame, we don't clear messages_to_return
-            # as they should be sent to the user
+            
+            # Implementation of "Subworkflows as Functions":
+            # If the popped frame was a subworkflow and had a return/snapshot config,
+            # we restore the memory state while keeping only the requested variables.
+            if "snapshot" in popped_frame and popped_frame.get("return_vars"):
+                snapshot = popped_frame["snapshot"]
+                return_vars = popped_frame["return_vars"]
+                if isinstance(return_vars, str):
+                    return_vars = [return_vars]
+                
+                # Keep return values from the current (dirty) memory
+                results_to_keep = {}
+                for var in return_vars:
+                    val = memory.get_variable(var)
+                    if val is not None:
+                        results_to_keep[var] = val
+                
+                # Restore memory to snapshot
+                memory.variables = snapshot
+                
+                # Inject return values back into the clean state
+                for var, val in results_to_keep.items():
+                    memory.set_variable(var, val)
+                
+                logger.info(f"Subworkflow {popped_frame.get('name')} completed. Restored memory and kept: {list(results_to_keep.keys())}")
+
             continue
             
         current_step = steps[index]
@@ -112,7 +135,8 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
             tone_text, 
             llm_model, 
             tools,
-            workflows
+            workflows,
+            is_root=True
         )
         
         if result.status == "blocking":
@@ -192,16 +216,27 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
                         break
                 
                 if sub_wf_list:
+                    metadata = sub_wf_list[0] if isinstance(sub_wf_list, list) else sub_wf_list
+                    return_vars = metadata.get('return')
+                    
                     if isinstance(sub_wf_list, list):
                         sub_steps = sub_wf_list[1:]
                     else:
                         sub_steps = sub_wf_list.get('steps', [])
                         
-                    memory.stack.append({
+                    frame_data = {
                         "steps": sub_steps,
                         "index": 0,
                         "name": sub_name
-                    })
+                    }
+                    
+                    # If this subworkflow has a return field, prepare for functional scoping
+                    if return_vars:
+                        frame_data["snapshot"] = memory.variables.copy()
+                        frame_data["return_vars"] = return_vars
+                        logger.info(f"Entering subworkflow {sub_name} with functional scoping. Will return: {return_vars}")
+                        
+                    memory.stack.append(frame_data)
                     frame['index'] += 1
                     continue
             

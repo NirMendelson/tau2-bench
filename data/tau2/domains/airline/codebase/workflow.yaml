@@ -20,6 +20,7 @@
   - id: find_reservation_id
     action: use_subworkflow
     subworkflow: FindReservationId
+
   - id: get_reservation_details
     action: use_tool
     tool_name: get_reservation_details
@@ -28,6 +29,7 @@
     set_variables:
     - cabin
     - flights
+
   - id: check_flight_connections
     action: conditional
     condition: '{number_of_flights} = 2'
@@ -36,6 +38,7 @@
       action: set_variable
       variable: flight_preference
       value: direct
+
     else:
     - id: check_one_stop_connection
       action: conditional
@@ -53,10 +56,7 @@
   # Step 2: Get trip details
 - id: fetch_trip_details
   action: fetch
-  fields:
-  - trip_type
-  - origin
-  - destination
+  fields: [trip_type, origin, destination]
   comment: origin and destination have to be 3 letter airport codes.
 
 - id: fetch_date
@@ -81,100 +81,43 @@
     condition: '{flight_preference} = direct'
     comment: "there are 2 possible values: 'direct' or 'one stop'. Do Not Infer it
       from the conversation, you have to get this value explicitly from the user."
-    then:
-    - id: search_direct_flights
-      action: use_tool
-      tool_name: search_direct_flight
-      input:
-      - '{{ origin }}'
-      - '{{ destination }}'
-      - '{{ date }}'
-      filter:
-      - field: available_seats.{{ cabin }}
-        operator: gte
-        value: '{{ number_of_passengers }}'
-    else:
-    - id: check_one_stop_only
-      action: conditional
-      condition: '{flight_preference} = one stop'
-      then:
-      - id: search_onestop_flights
-        action: use_tool
-        tool_name: search_onestop_flight
-        input:
-        - '{{ origin }}'
-        - '{{ destination }}'
-        - '{{ date }}'
-        filter:
-        - field: available_seats.{{ cabin }}
-          operator: gte
-          value: '{{ number_of_passengers }}'
-      else:
+
+    then:       
       - id: search_direct_flights
         action: use_tool
         tool_name: search_direct_flight
-        input:
-        - '{{ origin }}'
-        - '{{ destination }}'
-        - '{{ date }}'
-        filter:
-        - field: available_seats.{{ cabin }}
-          operator: gte
-          value: '{{ number_of_passengers }}'
-      - id: search_onestop_flights
-        action: use_tool
-        tool_name: search_onestop_flight
-        input:
-        - '{{ origin }}'
-        - '{{ destination }}'
-        - '{{ date }}'
-        filter:
-        - field: available_seats.{{ cabin }}
-          operator: gte
-          value: '{{ number_of_passengers }}'
-  - id: display_flight_results
-    action: conditional
-    condition: "{flight_preference} = direct only"
-    then:
-      id: display_flight_results_direct
+        input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+        filter: filter out the results where the available seats in the specific cabin are less than the number of passengers
+        set_variables:
+          - search_direct_flight_result: result
+          
+      - id: display_direct_flight_results
+        action: fetch_with_message
+        field: selected_flights
+        message: |
+          Here are the available direct flights for your trip:
+
+          {{ search_direct_flight_result }}
+
+          Please select which flight you'd like to book by providing the flight ID.
+    else:
+    - id: search_one_stop_flights
+      action: use_tool
+      tool_name: search_one_stop_flight
+      input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
+      filter: filter out the results where the available seats in the specific cabin are less than the number of passengers
+      set_variables:
+        - search_one_stop_flight_result: result
+
+    - id: display_one_stop_flight_results
       action: fetch_with_message
       field: selected_flights
       message: |
-        Here are the available direct flights for your trip:
+        Here are the available one-stop flights for your trip:
 
-        {{ search_direct_flight_result }}
+        {{ search_one_stop_flight_result }}
 
-        Please select which flight you'd like to book by providing the flight ID.
-    else:
-    - id: check_display_one_stop
-      action: conditional
-      condition: "{flight_preference} = one stop only"
-      then:
-        id: check_display_one_stop_true
-        action: fetch_with_message
-        field: selected_flights
-        message: |
-          Here are the available one-stop flights for your trip:
-
-          {{ search_onestop_flight_result }}
-
-          Please select which flight you'd like to book by providing the flight ID.
-      else:
-        id: check_display_one_stop_false
-        action: fetch_with_message
-        field: selected_flights
-        message: |
-          Here are the available flights for your trip:
-
-          Direct flights:
-          {{ search_direct_flight_result }}
-
-          One-stop flights:
-          {{ search_onestop_flight_result }}
-
-          Please select which flight you'd like to book by providing the flight ID.
-
-        # Step 10: Collect passenger information
+    # Step 10: Collect passenger information
   - id: ask_about_travel_insurance
     action: fetch_with_message
     field: interested_in_travel_insurance
@@ -191,17 +134,11 @@
     action: use_tool
     tool_name: get_user_details
     input: ["{{ user_id }}"]
-    filter:
-    - field: count_travel_certificates
-      operator: less_equal
-      value: 1
-    - field: count_credit_cards
-      operator: less_equal
-      value: 1
-    - field: count_gift_cards
-      operator: less_equal
-      value: 3
-
+    filter: "count_travel_certificates <= 1 and count_credit_cards <= 1 and count_gift_cards <= 3"
+    set_variables:
+      - travel_certificates
+      - credit_cards
+      - gift_cards
 
   - id: get_explicit_confirmation
     action: fetch
@@ -955,24 +892,8 @@
 
 ---
 - subworkflow: FindReservationId
+  return: reservation_id
   when: "user doesn't know their reservation ID or asks to find their reservation"
-  keywords:
-  - find reservation
-  - reservation ID
-  - my reservation
-  - what is my reservation
-  - I don't know my reservation ID
-  - forgot reservation ID
-  - lost reservation number
-  - find my reservation
-
-  examples:
-  - "I don't know my reservation ID"
-  - "Can you help me find my reservation?"
-  - "What is my reservation number?"
-  - "I forgot my reservation ID"
-  - "I lost my reservation number"
-  - "How do I find my reservation?"
 
 - id: fetch_user_id
   action: fetch
@@ -1000,7 +921,7 @@
     action: conditional
     condition: "{len(reservations_list)} = 1"
     then:
-              # User has only one reservation - return it directly
+      # User has only one reservation - return it directly
     - id: set_single_reservation_id
       action: set_variable
       variable: reservation_id
@@ -1011,7 +932,7 @@
       message: "I found one reservation in your account. Your reservation ID is {{
         reservations_list[0] }}."
     else:
-              # User has multiple reservations - need to ask for origin/destination
+    # User has multiple reservations - need to ask for origin/destination
     - id: fetch_flight_details
       action: fetch_with_message
       fields:
@@ -1020,7 +941,7 @@
       message: |
         To help me identify which reservation you're looking for, please provide: origin and destination for the reservation.
 
-              # Step 4: Fetch details for all reservations loop
+      # Step 4: Fetch details for all reservations loop
     - id: fetch_all_reservation_details
       action: loop
       loop_over: reservations_list
@@ -1035,7 +956,7 @@
         - origin
         - destination
 
-              # Step 5: Find matching reservation from memory
+      # Step 5: Find matching reservation from memory
     - id: find_matching_reservation
       action: instruction
       instruction: |
@@ -1050,7 +971,7 @@
         Return the reservation ID. If no match is found, return null.
       set_variable: reservation_id
 
-              # Step 5: Check if a match was found
+      # Step 5: Check if a match was found
     - id: check_match_found
       action: conditional
       condition: "{reservation_id} = null"
@@ -1112,10 +1033,16 @@
       Parse the reservation_id into this format: ['reservation_id', 'reservation_id', 'reservation_id'] and set the variable reservation_id_list to the list.
     set_variable: reservation_id_list
 
-- "id: reservation_id_missing\naction: use_tool\ntool_name: transfer_to_human_agents\n\
-  input:\n  - \"Missing reservation id for flight cancellation\""
-- "id: escalate_to_human\naction: use_tool\ntool_name: transfer_to_human_agents\n\
-  input: [\"Reservation ID is missing after attempting to fetch or find.\"]"
+- id: reservation_id_missing
+  action: use_tool
+  tool_name: transfer_to_human_agents
+  input: ["Missing reservation id for flight cancellation"]
+
+- id: escalate_to_human
+  action: use_tool
+  tool_name: transfer_to_human_agents
+  input: ["Reservation ID is missing after attempting to fetch or find."]
+
 - id: loop_over_reservations
   action: loop
   loop_over: reservation_id_list

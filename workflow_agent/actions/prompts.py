@@ -9,7 +9,6 @@ def get_fetch_single_prompt(field_name, conv_text, tone_text, memory_info, comme
     
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. Read the conversation carefully and check if you have the field '{field_name}' in the conversation, or can infer it from the conversation.
 {comment_section}
-You should infer information whenever possible, even if it is only implied indirectly.
 Treat the conversation like a detective: if a human could reasonably infer the answer, you should too.
 
 TASK:
@@ -17,7 +16,7 @@ TASK:
 2. You are intelligence agent. Think like a human reading between the lines: infer information whenever it is implied, even if not stated directly.
 3. PRIORITY:
    (1) Prefer explicit statements.
-   (2) If not explicit, infer the value from context if a reasonable human would.
+   (2) If not explicit, try to infer the value from context if a reasonable human would.
    (3) Only if it is neither explicit nor inferable, ask the user for this specific missing information.
 4. Normalize the user's meaning into the most appropriate value for this field — the wording does not need to match exactly.
 
@@ -60,7 +59,6 @@ def get_fetch_multi_prompt(field_names, conv_text, tone_text, memory_info, comme
     
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. Read the conversation carefully and check if you have the fields {fields_list} in the conversation, or can infer them from the conversation.
 {comment_section}
-You should infer information whenever possible, even if it is only implied indirectly.
 Treat the conversation like a detective: if a human could reasonably infer the answer, you should too.
 
 TASK:
@@ -68,7 +66,7 @@ TASK:
 2. You are an intelligence agent. Think like a human reading between the lines: infer information whenever it is implied, even if not stated directly.
 3. PRIORITY:
    (1) Prefer explicit statements.
-   (2) If not explicit, infer the value from context if a reasonable human would.
+   (2) If not explicit, try to infer the value from context if a reasonable human would.
    (3) Only if it is neither explicit nor inferable, ask the user for the specific missing information.
 4. Normalize the user's meaning into the most appropriate value for each field — the wording does not need to match exactly.
 
@@ -133,12 +131,11 @@ def get_fetch_with_condition_prompt(field_name, condition, conv_text, tone_text,
 TASK 1: FETCH FIELD
 Read the conversation carefully and check if you have the field '{field_name}' in the conversation, or can infer it from the conversation.
 {comment_section}
-You should infer information whenever possible, even if it is only implied indirectly.
 Treat the conversation like a detective: if a human could reasonably infer the answer, you should too.
 
 PRIORITY:
 (1) Prefer explicit statements.
-(2) If not explicit, infer the value from context if a reasonable human would.
+(2) If not explicit, try to infer the value from context if a reasonable human would.
 (3) Only if it is neither explicit nor inferable, ask the user for this specific missing information.
 
 Normalize the user's meaning into the most appropriate value for this field — the wording does not need to match exactly.
@@ -181,7 +178,7 @@ question: <question to ask if not found>
 condition_result: <true/false/null>
 ```"""
 
-def get_fetch_with_message_prompt(field_names, message, conversation, tone_text):
+def get_fetch_with_message_prompt(field_names, message, conversation, tone_text, memory_info):
     """
     Returns a prompt to check for fields in conversation, and if not found, use the message as the question.
     """
@@ -191,7 +188,6 @@ def get_fetch_with_message_prompt(field_names, message, conversation, tone_text)
     
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. Read the conversation carefully and check if you have the fields {fields_list} in the conversation, or can infer them from the conversation.
 
-You should infer information whenever possible, even if it is only implied indirectly.
 Treat the conversation like a detective: if a human could reasonably infer the answer, you should too.
 
 TASK:
@@ -199,7 +195,7 @@ TASK:
 2. You are an intelligence agent. Think like a human reading between the lines: infer information whenever it is implied, even if not stated directly.
 3. PRIORITY:
    (1) Prefer explicit statements.
-   (2) If not explicit, infer the value from context if a reasonable human would.
+   (2) If not explicit, try to infer the value from context if a reasonable human would.
    (3) Only if it is neither explicit nor inferable, use the provided message as the question to ask for the missing information.
 4. Normalize the user's meaning into the most appropriate value for each field — the wording does not need to match exactly.
 
@@ -222,6 +218,9 @@ Message to use as question (use exactly as provided if fields are not found):
 
 Conversation:
 {conversation}
+
+Memory:
+{memory_info}
 
 Follow this tone when generating the questions:
 {tone_text}
@@ -456,3 +455,32 @@ Respond in YAML format:
 result: <the value to store in the variable, or null if task cannot be completed>
 reasoning: <brief explanation of how you arrived at the result>
 ```"""
+
+def get_filter_tool_result_prompt(tool_result, filter_instruction, memory_variables_json):
+    """
+    Returns a prompt to filter/alter tool results using an LLM.
+    """
+    return f"""You are an intelligence agent. You have received data from a tool call and you need to filter or alter it based on the user's instruction.
+
+TOOL RESULT:
+{tool_result}
+
+FILTER/ALTER INSTRUCTION:
+{filter_instruction}
+
+CURRENT MEMORY VARIABLES (for context):
+{memory_variables_json}
+
+TASK:
+1. Apply the instruction to the tool result.
+2. If the result is a list, remove items that don't match the criteria.
+3. If the result is an object, extract or alter parts as instructed. 
+4. If you mention variables from memory in your reasoning, use their values.
+5. Your goal is to "clean" the data before it is saved to memory.
+
+Respond in YAML format:
+```yaml
+result: <the filtered/altered result object or list>
+reasoning: <brief explanation of what you did>
+```"""
+

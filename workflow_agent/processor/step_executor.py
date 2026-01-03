@@ -5,6 +5,22 @@ from loguru import logger
 from ..actions import prompts
 from .action_config import is_action_blocking
 import re
+import yaml
+from yaml.resolver import Resolver
+
+# Custom YAML loader that doesn't automatically parse strings as dates/times
+class NoDatesSafeLoader(yaml.SafeLoader):
+    pass
+
+# Remove the implicit resolver for timestamps
+# This prevents 2024-05-26 from becoming a datetime.date object
+NoDatesSafeLoader.yaml_implicit_resolvers = {
+    k: [r for r in v if r[0] != 'tag:yaml.org,2002:timestamp']
+    for k, v in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
+def custom_safe_load(content):
+    return yaml.load(content, Loader=NoDatesSafeLoader)
 
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -108,8 +124,7 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
     
     try:
         # Parse YAML/JSON result
-        import yaml
-        result = yaml.safe_load(content)
+        result = custom_safe_load(content)
         
         # Handle response format - check if it's multi-field format or single field format
         if 'fields' in result:
@@ -198,8 +213,7 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
         print(content)
     
     try:
-        import yaml
-        result = yaml.safe_load(content)
+        result = custom_safe_load(content)
         
         # Use the LLM's evaluation of the condition
         condition_met = result.get('condition_result')
@@ -251,8 +265,11 @@ def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
     # Get conversation text
     conv_text = memory.get_history_as_text()
     
+    # Format memory info for prompts
+    memory_info = memory.get_variables_as_json()
+    
     # Call prompt with field names
-    prompt = prompts.get_fetch_with_message_prompt(target_fields, resolved_message, conv_text, tone_text)
+    prompt = prompts.get_fetch_with_message_prompt(target_fields, resolved_message, conv_text, tone_text, memory_info)
     
     if DEBUG_MODE:
         print("--- Fetch with Message Prompt ---")
@@ -272,8 +289,7 @@ def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
     
     try:
         # Parse YAML/JSON result
-        import yaml
-        result = yaml.safe_load(content)
+        result = custom_safe_load(content)
         
         # Handle response format
         if 'fields' in result:
@@ -499,9 +515,8 @@ def execute_conditional_with_message(step, memory, conversation, tone_text, llm_
     
     # Parse YAML response
     try:
-        import yaml
         cleaned_content = clean_json_response(content)
-        result = yaml.safe_load(cleaned_content)
+        result = custom_safe_load(cleaned_content)
         
         if not result or 'condition_result' not in result:
             logger.error(f"invalid response format from conditional_with_message: {content}")
@@ -533,7 +548,7 @@ def execute_conditional_with_message(step, memory, conversation, tone_text, llm_
         logger.error(f"error parsing conditional_with_message response: {e}")
         return StepExecutionResult("failed", message="Failed to parse condition evaluation.")
 
-def execute_use_tool(step, memory, tools):
+def execute_use_tool(step, memory, tools, llm_model):
     """
     Calls an external tool (e.g., airline tools) and handles the output.
     Uses ToolExecutor to handle workflow syntax (input lists) to tool parameters.
@@ -640,6 +655,76 @@ def execute_use_tool(step, memory, tools):
     except Exception as e:
         logger.error(f"tool call {tool_name} failed: {e}")
         return StepExecutionResult("failed", message=str(e))
+    
+    # Handle LLM filtering if 'filter' instruction is provided
+    filter_instruction = step.get('filter')
+    if filter_instruction:
+        logger.info(f"Applying filter to tool {tool_name} results: {filter_instruction}")
+        
+        # Resolve templates in the filter instruction (e.g. {{ cabin }})
+        resolved_filter = memory.resolve_templates(str(filter_instruction))
+        
+        # Prepare context for the LLM
+        memory_vars_json = memory.get_variables_as_json()
+        
+        # Serialize result for the prompt
+        def serialize_for_prompt(obj):
+            from pydantic import BaseModel
+            import datetime
+            if isinstance(obj, BaseModel):
+                return obj.model_dump()
+            if isinstance(obj, (datetime.date, datetime.datetime)):
+                return obj.isoformat()
+            if isinstance(obj, list):
+                return [serialize_for_prompt(item) for item in obj]
+            if isinstance(obj, dict):
+                return {k: serialize_for_prompt(v) for k, v in obj.items()}
+            return obj
+            
+        serialized_result = serialize_for_prompt(result)
+        
+        prompt = prompts.get_filter_tool_result_prompt(
+            json.dumps(serialized_result, indent=2, ensure_ascii=False),
+            resolved_filter,
+            memory_vars_json
+        )
+        
+        if DEBUG_MODE:
+            print("--- Filter Prompt ---")
+            print(prompt)
+            print("--------------------------------")
+            
+        try:
+            response = litellm.completion(
+                model=llm_model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            filter_content = clean_json_response(response.choices[0].message.content)
+            
+            if DEBUG_MODE:
+                print("---agent filter output---")
+                print(filter_content)
+                
+            filter_data = custom_safe_load(filter_content)
+            
+            # Update the result with the filtered version
+            # If the LLM returned a null result, we keep the original or set to empty list?
+            # User said "only then insert it to memory", so we should use the filtered result.
+            if 'result' in filter_data:
+                result = filter_data['result']
+                logger.info(f"Filter reasoning: {filter_data.get('reasoning', 'No reasoning provided')}")
+            else:
+                logger.warning(f"Filter action did not return a 'result' field. Response: {filter_content}")
+                
+        except Exception as e:
+            logger.error(f"Error during tool result filtering: {e}")
+            # In case of LLM failure, we can either fail the whole step or continue with original results.
+            # Usually better to fail if filtering was required for safety/logic.
+            # But here let's continue with a warning to be robust, or should we fail?
+            # User said "only then insert it to memory", suggesting filtering is crucial.
+            # Let's fail for now to be safe.
+            return StepExecutionResult("failed", message=f"Failed to filter tool results: {str(e)}")
     
     # Handle set_variables mapping
     # Supports multiple formats:
@@ -791,7 +876,79 @@ def handle_fallback(memory, tools):
     result = tools.execute('transfer_to_human_agents', **{'summary': "Workflow fallback triggered"})
     return StepExecutionResult("blocking", message=result)
 
-def execute_step(step, memory, conversation, tone_text, llm_model, tools, workflows):
+def _get_subworkflow_steps(sub_name, workflows):
+    """Helper to find subworkflow steps by name."""
+    for w in workflows:
+        if isinstance(w, list) and len(w) > 0 and w[0].get('subworkflow') == sub_name:
+            return w[1:]
+        elif isinstance(w, dict) and w.get('subworkflow') == sub_name:
+            return w.get('steps', [])
+    return None
+    
+def _get_subworkflow_definition(sub_name, workflows):
+    """Helper to find full subworkflow definition (metadata + steps)."""
+    for w in workflows:
+        if isinstance(w, list) and len(w) > 0 and w[0].get('subworkflow') == sub_name:
+            return w
+        elif isinstance(w, dict) and w.get('subworkflow') == sub_name:
+            return w
+    return None
+
+def execute_subworkflow_recursive(sub_name, memory, conversation, tone_text, llm_model, tools, workflows):
+    """Executes a subworkflow recursively (for non-root contexts)."""
+    sub_def = _get_subworkflow_definition(sub_name, workflows)
+    if not sub_def:
+        logger.error(f"Subworkflow {sub_name} not found")
+        return StepExecutionResult("failed", message=f"Subworkflow {sub_name} not found")
+        
+    metadata = sub_def[0] if isinstance(sub_def, list) else sub_def
+    return_vars = metadata.get('return')
+    
+    if isinstance(sub_def, list):
+        sub_steps = sub_def[1:]
+    else:
+        sub_steps = sub_def.get('steps', [])
+        
+    if not sub_steps:
+        logger.error(f"Subworkflow {sub_name} is empty")
+        return StepExecutionResult("failed", message=f"Subworkflow {sub_name} is empty")
+
+    # If functional scoping is requested, take a snapshot
+    snapshot = None
+    if return_vars:
+        snapshot = memory.variables.copy()
+        logger.info(f"Recursive: Entering subworkflow {sub_name} with functional scoping. Will return: {return_vars}")
+        
+    for s_step in sub_steps:
+        result = execute_step(s_step, memory, conversation, tone_text, llm_model, tools, workflows, is_root=False)
+        if result.status != "completed":
+            # If blocking or failed, we don't restore yet as we'll resume later
+            # (Note: resume in recursive subworkflows is tricky, but following current pattern)
+            return result
+            
+    # Subworkflow completed - handle memory restoration if scoping was used
+    if snapshot and return_vars:
+        if isinstance(return_vars, str):
+            return_vars = [return_vars]
+            
+        results_to_keep = {}
+        for var in return_vars:
+            val = memory.get_variable(var)
+            if val is not None:
+                results_to_keep[var] = val
+        
+        # Restore memory to snapshot
+        memory.variables = snapshot
+        
+        # Inject return values back
+        for var, val in results_to_keep.items():
+            memory.set_variable(var, val)
+            
+        logger.info(f"Recursive: Subworkflow {sub_name} completed. Restored memory and kept: {list(results_to_keep.keys())}")
+        
+    return StepExecutionResult("completed")
+
+def execute_step(step, memory, conversation, tone_text, llm_model, tools, workflows, is_root=False):
     """
     Main entry point for executing an individual step based on its action type.
     """
@@ -816,19 +973,22 @@ def execute_step(step, memory, conversation, tone_text, llm_model, tools, workfl
     elif action == 'conditional_with_message':
         result = execute_conditional_with_message(step, memory, conversation, tone_text, llm_model)
     elif action == 'use_tool':
-        result = execute_use_tool(step, memory, tools)
+        result = execute_use_tool(step, memory, tools, llm_model)
     elif action == 'instruction':
         result = execute_instruction(step, memory, conversation, tone_text, llm_model, tools, workflows)
     elif action == 'loop':
         result = execute_loop(step, memory, conversation, tone_text, llm_model, tools, workflows)
     elif action == 'use_subworkflow':
-        # Result "completed" is handled by the caller to push stack
+        if not is_root:
+            sub_name = step.get('subworkflow')
+            return execute_subworkflow_recursive(sub_name, memory, conversation, tone_text, llm_model, tools, workflows)
+        # Root calls are handled by the orchestrator to push to stack
         return StepExecutionResult("completed")
     else:
         return StepExecutionResult("failed", message=f"Unknown action: {action}")
 
-    # Handle automatic branching if result has a condition (for loops/recursive calls)
-    if result.status == "completed" and hasattr(result, 'result') and result.result and 'condition' in result.result:
+    # Handle automatic branching ONLY IF NOT ROOT
+    if not is_root and result.status == "completed" and hasattr(result, 'result') and result.result and 'condition' in result.result:
         is_true = result.result['condition']
         branch_block = step.get('then' if is_true else 'else')
         branch_steps = []
@@ -841,9 +1001,8 @@ def execute_step(step, memory, conversation, tone_text, llm_model, tools, workfl
                 branch_steps = [branch_block]
         
         if branch_steps:
-            # Recursively execute branch steps
             for b_step in branch_steps:
-                b_result = execute_step(b_step, memory, conversation, tone_text, llm_model, tools, workflows)
+                b_result = execute_step(b_step, memory, conversation, tone_text, llm_model, tools, workflows, is_root=False)
                 if b_result.status != "completed":
                     return b_result
                     
@@ -901,28 +1060,7 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools, workfl
         if loop_steps:
             # Execute multiple steps in sequence
             for sub_step in loop_steps:
-                result = execute_step(sub_step, memory, conversation, tone_text, llm_model, tools, workflows)
-                
-                # Handle Subworkflow manually inside loops
-                if sub_step.get('action') == 'use_subworkflow':
-                    sub_name = sub_step.get('subworkflow')
-                    # Find subworkflow by searching first object of each list
-                    sub_steps = []
-                    for w in workflows:
-                        if isinstance(w, list) and len(w) > 0 and w[0].get('subworkflow') == sub_name:
-                            sub_steps = w[1:]
-                            break
-                        elif isinstance(w, dict) and w.get('subworkflow') == sub_name:
-                            sub_steps = w.get('steps', [])
-                            break
-                    
-                    if sub_steps:
-                        for s_step in sub_steps:
-                            s_result = execute_step(s_step, memory, conversation, tone_text, llm_model, tools, workflows)
-                            if s_result.status != "completed":
-                                return s_result
-                    else:
-                        logger.error(f"Subworkflow {sub_name} not found or empty in loop")
+                result = execute_step(sub_step, memory, conversation, tone_text, llm_model, tools, workflows, is_root=False)
                 
                 if result.status == "failed":
                     logger.error(f"Loop step {sub_step.get('id', 'unknown')} failed for item {item}: {result.message}")
@@ -934,7 +1072,7 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools, workfl
                 # Continue to next step if completed
         else:
             # Execute single subaction (backward compatibility)
-            result = execute_step(subaction, memory, conversation, tone_text, llm_model, tools, workflows)
+            result = execute_step(subaction, memory, conversation, tone_text, llm_model, tools, workflows, is_root=False)
             
             if result.status == "failed":
                 logger.error(f"Loop subaction failed for item {item}: {result.message}")
