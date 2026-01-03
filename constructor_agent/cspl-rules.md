@@ -83,7 +83,7 @@ Combines `fetch` and `conditional`, Fetching and then checking a condition.
 ### 5. `use_tool`
 Call a backend tool. 
 - `tool_name`: Name of the tool.
-- `input`: List of arguments ["{{ var }}", "{{ vars }}"].
+- `input`: **MUST be an inline list** `["{{ var }}", "{{ vars }}"]`. NEVER use multiline format like `input:\n  - '{{ var }}'`.
 - `set_variables`: (Optional) List of fields to extract from tool output. If not specified, we will set all of the variables the tool returns.
 - **Example**:
   ```yaml
@@ -138,9 +138,15 @@ Manually set a variable.
 
 ## Critical
 - only use fetch_with_message if you need to show a SPECIFIC message, fetch on default send a message if it doesn't have the information.
-- you can set name of a variable with this syntax (payment_id value goes to payment var)
-  set_variables:
-  - payment: payment_id
+- you can set name of a variable with this syntax (for examaple, if the instruction is use get_payment to get payment id and name it payment) 
+
+  - id: get_payment
+    action: use_tool
+    tool_name: get_payment
+    input: ['{{ payment_id }}']
+    set_variables:
+    - payment: payment_id
+
 - `else` blocks are OPTIONAL. If no `else` block is provided, execution continues to the next sequential step. Only add an `else` block if you need different logic than what follows naturally
 
 ## DO NOT DO

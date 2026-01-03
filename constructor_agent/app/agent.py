@@ -276,10 +276,14 @@ class ConstructorAgent:
 
     def _step_to_yaml(self, step: dict) -> str:
         """Convert a step dict to YAML string."""
+        import copy
+        processed_step = copy.deepcopy(step)
+        self.processor._enforce_flow_style(processed_step)
+        
         s = io.StringIO()
         y = YAML()
-        y.indent(mapping=2, sequence=4, offset=2)
-        y.dump(step, s)
+        y.indent(mapping=2, sequence=2, offset=0)
+        y.dump(processed_step, s)
         return s.getvalue()
 
     def _generate_diff(self, before: str, after: str) -> str:
@@ -383,10 +387,14 @@ class ConstructorAgent:
                         wf_name = args.get("name", "")
                         wf = self.processor.get_document_by_name(wf_name)
                         if wf:
+                            import copy
+                            processed_wf = copy.deepcopy(wf)
+                            self.processor._enforce_flow_style(processed_wf)
+                            
                             s = io.StringIO()
                             y = YAML()
-                            y.indent(mapping=2, sequence=4, offset=2)
-                            y.dump(wf, s)
+                            y.indent(mapping=2, sequence=2, offset=0)
+                            y.dump(processed_wf, s)
                             tool_result = s.getvalue()
                         else:
                             tool_result = f"❌ Workflow '{wf_name}' not found."
@@ -451,7 +459,9 @@ class ConstructorAgent:
                             # Write current in-memory state to temp file
                             y = YAML()
                             y.preserve_quotes = True
-                            y.indent(mapping=2, sequence=4, offset=2)
+                            y.indent(mapping=2, sequence=2, offset=0)
+                            # Enforce style before dumping
+                            self.processor._enforce_flow_style(self.processor.documents)
                             y.dump_all(self.processor.documents, tmp_file)
                         
                         try:

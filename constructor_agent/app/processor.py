@@ -7,7 +7,7 @@ class WorkflowProcessor:
         self.file_path = file_path
         self.yaml = YAML()
         self.yaml.preserve_quotes = True
-        self.yaml.indent(mapping=2, sequence=4, offset=2)
+        self.yaml.indent(mapping=2, sequence=2, offset=0)
         self.documents = []
 
     def load(self):
@@ -16,8 +16,24 @@ class WorkflowProcessor:
             self.documents = [doc for doc in self.yaml.load_all(f) if doc is not None]
         return self.documents
 
+    def _enforce_flow_style(self, data):
+        """Recursively ensure that 'input' and 'fields' are using flow style."""
+        from ruamel.yaml.comments import CommentedSeq
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if k in ['input', 'fields'] and isinstance(v, list) and len(v) > 0:
+                    if not isinstance(v, CommentedSeq):
+                        data[k] = CommentedSeq(v)
+                    data[k].fa.set_flow_style()
+                else:
+                    self._enforce_flow_style(v)
+        elif isinstance(data, list):
+            for item in data:
+                self._enforce_flow_style(item)
+
     def save(self):
         """Save all documents back to the yaml file."""
+        self._enforce_flow_style(self.documents)
         with open(self.file_path, 'w') as f:
             self.yaml.dump_all(self.documents, f)
 
