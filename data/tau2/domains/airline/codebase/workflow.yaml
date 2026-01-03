@@ -86,7 +86,7 @@
       action: use_tool
       tool_name: search_direct_flight
       input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
-      filter: filter out the results where the available seats in the specific 
+      comment: filter out the results where the available seats in the specific 
         cabin are less than the number of passengers
       set_variables:
       - search_direct_flight_result: result
@@ -105,7 +105,7 @@
       action: use_tool
       tool_name: search_onestop_flight
       input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
-      filter: filter out the results where the available seats in the specific 
+      comment: filter out the results where the available seats in the specific 
         cabin are less than the number of passengers
       set_variables:
       - search_onestop_flight_result: result
@@ -118,6 +118,9 @@
 
         {{ search_onestop_flight_result }}
 
+        Please select which flight you'd like to book by providing the flight ID.
+
+
     # Step 10: Collect passenger information
   - id: ask_about_travel_insurance
     action: fetch_with_message
@@ -129,8 +132,8 @@
     action: use_tool
     tool_name: get_user_details
     input: ['{{ user_id }}']
-    filter: "get saved passengers, and if the main user is not in the list, add it
-      to the list, based on the user name and dob"
+    comment: get saved passengers, and if the main user is not in the list, add it
+      to the list, based on the user name and dob
     set_variables:
     - possible_but_not_confirmed_passengers: result
 
@@ -147,12 +150,13 @@
     action: fetch_with_message
     field: preferred_payment_method
     message: What is your preferred payment method? You can pay with either 1 certificate, 1 credit card, or up to 3 gift cards.
+    comment: valid options are 'certificate', 'credit_card', 'gift_card'
 
   - id: collect_payment_methods
     action: use_tool
     tool_name: get_user_details
     input: ["{{ user_id }}"]
-    filter: "get the details of the preferred payment method"
+    comment: get the details of the preferred payment method
     set_variables:
     - preferred_payment_method_details: result
 
@@ -193,12 +197,12 @@
     smart_tool: true
     tool_name: book_reservation
     input: ["{{ user_id }}", "{{ origin }}", "{{ destination }}", "{{ flight_type
-        }}", "{{ cabin }}", "{{ flights }}", "{{ passengers_details }}", "{{ preferred_payment_method_details
+        }}", "{{ cabin }}", "{{ selected_flights }}", "{{ passengers_details }}", "{{ preferred_payment_method_details
         }}", "{{ total_baggages }}", "{{ nonfree_baggages }}", "{{ travel_insurance
         }}", "{{ total_price }}"]
-    filter: "book the reservation"
+    comment: "In payment_methods, the 'amount' field must be the exact portion of the balance to be charged. The sum of all amounts must equal total_price. (Limit: max 1 certificate, 1 credit card, 3 gift cards). in addition, Each reservation can use at most one travel certificate, at most one credit card, and at most three gift cards."
     set_variables:
-    - new_reservation_id
+    - new_reservation_id: reservation_id
 
   - id: display_reservation_confirmation
     action: reply
@@ -660,7 +664,7 @@
     tool_name: search_direct_flight
     input: ["{{ current_origin }}", "{{ current_destination }}", "{{ requested_dates
         }}"]
-    filter:
+    comment:
     - field: available_seats.{{ current_cabin }}
       operator: gte
       value: "{{ current_number_of_passengers }}"
@@ -671,7 +675,7 @@
     tool_name: search_onestop_flight
     input: ["{{ current_origin }}", "{{ current_destination }}", "{{ requested_dates
         }}"]
-    filter:
+    comment:
     - field: available_seats.{{ current_cabin }}
       operator: gte
       value: "{{ current_number_of_passengers }}"

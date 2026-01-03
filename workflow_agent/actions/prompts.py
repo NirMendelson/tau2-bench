@@ -183,7 +183,7 @@ question: |-
 condition_result: <true/false/null>
 ```"""
 
-def get_fetch_with_message_prompt(field_names, message, conversation, tone_text, memory_info):
+def get_fetch_with_message_prompt(field_names, message, conversation, tone_text, memory_info, comment=None):
     """
     Returns a prompt to check for fields in conversation, and if not found, use the message as the question.
     """
@@ -191,8 +191,12 @@ def get_fetch_with_message_prompt(field_names, message, conversation, tone_text,
     fields_yaml = "\n".join([f"  {f}: |-\n    <extracted value if found, null if not found>" for f in field_names])
     questions_yaml = "\n".join([f"  {f}: |-\n    <question to ask if not found>" for f in field_names])
     
+    comment_section = ""
+    if comment:
+        comment_section = f"{comment}\n"
+    
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. Read the conversation carefully and check if you have the fields {fields_list} in the conversation, or can infer them from the conversation.
-
+{comment_section}
 Treat the conversation like a detective: if a human could reasonably infer the answer, you should too.
 
 TASK:
@@ -239,12 +243,16 @@ questions:
 all_found: true/false
 ```"""
 
-def get_reply_prompt(message_template, tone_text, conversation_context, memory_info):
+def get_reply_prompt(message_template, tone_text, conversation_context, memory_info, comment=None):
     """
     Returns a prompt to generate a natural language reply based on a template message.
     """
+    comment_section = ""
+    if comment:
+        comment_section = f"\nADDITIONAL CONTEXT:\n{comment}\n"
+        
     return f"""here is your instruction for how to reply: {message_template}
-
+{comment_section}
 Generate the response using the tone below:
 {tone_text}
 
@@ -261,12 +269,16 @@ CRITICAL:
 
 Return ONLY the reply message, nothing else."""
 
-def get_reply_exact_message_prompt(message_template, tone_text, conversation_context):
+def get_reply_exact_message_prompt(message_template, tone_text, conversation_context, comment=None):
     """
     Returns a prompt to generate a natural language reply based on a template message.
     """
+    comment_section = ""
+    if comment:
+        comment_section = f"\nADDITIONAL CONTEXT:\n{comment}\n"
+        
     return f"""You need to tell the user this reply message: {message_template}
-
+{comment_section}
 Read the conversation history to answer correctly in context:
 {conversation_context}
 
@@ -320,7 +332,7 @@ workflows:
   ...
 ```"""
 
-def get_condition_eval_prompt(condition, field_info, conv_text):
+def get_condition_eval_prompt(condition, field_info, conv_text, comment=None):
     """
     Returns a prompt to evaluate a natural language condition based on memory variables.
     Conditions are in natural language format like "{variable} = value" or "{variable} <= 5".
@@ -331,8 +343,12 @@ def get_condition_eval_prompt(condition, field_info, conv_text):
     else:
         condition_str = str(condition)
 
-    return f"""You are an intelligence agent. Evaluate this natural language condition based on the field values and conversation context.
+    comment_section = ""
+    if comment:
+        comment_section = f"\nADDITIONAL CONTEXT:\n{comment}\n"
 
+    return f"""You are an intelligence agent. Evaluate this natural language condition based on the field values and conversation context.
+{comment_section}
 Condition to evaluate: {condition_str}
 
 Memory:
@@ -354,7 +370,7 @@ CRITICAL: Use your intelligence to determine if the condition is true or false, 
 
 Evaluate the condition and return ONLY "true" or "false" (lowercase, no quotes, no explanation)."""
 
-def get_conditional_with_message_prompt(condition, field_info, conv_text, tone_text, message_on_true=None, message_on_false=None):
+def get_conditional_with_message_prompt(condition, field_info, conv_text, tone_text, message_on_true=None, message_on_false=None, comment=None):
     """
     Returns a prompt to evaluate a condition and generate a message if needed for conditional_with_message action.
     This combines condition evaluation and message generation into a single LLM call.
@@ -363,6 +379,10 @@ def get_conditional_with_message_prompt(condition, field_info, conv_text, tone_t
         condition_str = condition
     else:
         condition_str = str(condition)
+    
+    comment_section = ""
+    if comment:
+        comment_section = f"\nADDITIONAL CONTEXT:\n{comment}\n"
     
     message_info = ""
     if message_on_true:
@@ -373,7 +393,7 @@ def get_conditional_with_message_prompt(condition, field_info, conv_text, tone_t
         message_info = "\n- No messages configured for this condition. If condition matches a branch with no message, continue to next step."
     
     return f"""You are an intelligence agent. Evaluate this natural language condition based on the field values and conversation context.
-
+{comment_section}
 This is part of a conditional_with_message action that will re-evaluate the condition after each user response until the condition result matches a branch with no message configured.{message_info}
 
 Condition to evaluate: {condition_str}
@@ -415,7 +435,7 @@ message: |-
   <generated message if message is configured for this condition result, null if no message needed>
 ```"""
 
-def get_instruction_prompt(instruction_text, tools_available, memory_variables, conversation_context, tone_text):
+def get_instruction_prompt(instruction_text, tools_available, memory_variables, conversation_context, tone_text, comment=None):
     """
     Returns a prompt for the LLM to execute an instruction task.
     
@@ -425,6 +445,7 @@ def get_instruction_prompt(instruction_text, tools_available, memory_variables, 
         memory_variables: Dictionary of current memory variables
         conversation_context: Conversation history
         tone_text: Tone guidelines
+        comment: Optional additional context/instructions
     
     Returns:
         Formatted prompt string
@@ -434,8 +455,12 @@ def get_instruction_prompt(instruction_text, tools_available, memory_variables, 
     # Format memory variables for context
     memory_info = memory_variables
     
+    comment_section = ""
+    if comment:
+        comment_section = f"\nADDITIONAL CONTEXT:\n{comment}\n"
+    
     return f"""You are an intelligence agent executing a specific task. Follow the instructions below carefully.
-
+{comment_section}
 TASK INSTRUCTION:
 {instruction_text}
 
@@ -464,7 +489,7 @@ reasoning: |-
   <brief explanation of how you arrived at the result>
 ```"""
 
-def get_filter_tool_result_prompt(tool_result, filter_instruction, memory_variables_json):
+def get_comment_on_tool_result_prompt(tool_result, comment, memory_variables_json):
     """
     Returns a prompt to filter/alter tool results using an LLM.
     """
@@ -474,7 +499,7 @@ TOOL RESULT:
 {tool_result}
 
 FILTER/ALTER INSTRUCTION:
-{filter_instruction}
+{comment}
 
 CURRENT MEMORY VARIABLES (for context):
 {memory_variables_json}
@@ -493,11 +518,21 @@ reasoning: |-
   <brief explanation of what you did>
 ```"""
 
-def get_smart_tool_resolver_prompt(tool_name, tool_description, tool_parameters, memory_json, tone_text, conversation_context):
+def get_smart_tool_resolver_prompt(tool_name, tool_description, tool_parameters, memory_json, tone_text, conversation_context, comment=None, input_data=None):
     """
     Returns a prompt for the LLM to prepare arguments for a tool call.
     """
+    comment_section = ""
+    if comment:
+        comment_section = f"\nADDITIONAL CONTEXT:\n{comment}\n"
+        
+    input_section = ""
+    if input_data:
+        input_section = f"\nSTEP INPUT HINTS (use these values if they match memory or context):\n{input_data}\n"
+        
     return f"""You are an intelligence agent responsible for preparing data for a tool call.
+{comment_section}
+{input_section}
 Your job is to map variables from memory into the specific arguments required by the tool.
 
 TOOL: {tool_name}

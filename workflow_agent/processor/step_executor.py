@@ -57,14 +57,19 @@ def clean_json_response(response_text):
     """
     Cleans the LLM response to ensure it's valid JSON/YAML.
     Removes markdown code blocks if present.
-    Also sanitizes YAML values by replacing unquoted colons with dashes to prevent parsing errors.
+    Ensures primary keys are correctly formatted and nested content is indented
+    to prevent YAML parsing errors with colons and lists.
     """
     response_text = response_text.strip()
-    if response_text.startswith("```"):
+    
+    # Robust extraction of content from markdown code blocks
+    code_block_match = re.search(r'```(?:yaml|json)?\n(.*?)\n```', response_text, re.DOTALL)
+    if code_block_match:
+        response_text = code_block_match.group(1).strip()
+    elif response_text.startswith("```"):
+        # Fallback for code blocks missing the closing newline
         lines = response_text.split("\n")
-        # Remove first line (```yaml or ```json)
         lines = lines[1:]
-        # Remove last line if it is ```
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         response_text = "\n".join(lines).strip()
@@ -76,32 +81,80 @@ def clean_json_response(response_text):
     except:
         pass
 
-    # Sanitization for YAML: replace colons in unquoted values with dashes
+    # The "YAML Surgeon" Logic:
+    # 1. Identifies known primary keys to orient the structure.
+    # 2. Forces indentation on content within block scalars (|-) even if the LLM forgets.
+    # 3. Automatically quotes values containing colons to prevent YAML parsing breakage.
+    primary_keys = {
+        "found", "value", "question", "condition_result", "fields", "questions", 
+        "all_found", "combined_question", "result", "reasoning", "arguments"
+    }
+    
     lines = response_text.split("\n")
     cleaned_lines = []
+    block_mode = False
+    
     for line in lines:
-        if ":" in line:
-            # Check if it looks like a YAML key-value pair: KEY: VALUE
-            # We look for the first colon that is followed by a space or is at the end of the line
-            match = re.match(r'^(\s*[\w_-]+):\s*(.*)$', line)
-            if match:
-                key = match.group(1)
-                value = match.group(2)
-                
-                # If the value contains extra colons and isn't quoted, sanitize it
-                stripped_value = value.strip()
-                if ":" in stripped_value and not (stripped_value.startswith('"') or stripped_value.startswith("'")):
-                    # Replace colons with dashes in the value
-                    value = value.replace(":", "-")
-                
-                cleaned_lines.append(f"{key}: {value}")
-            else:
-                # Doesn't match KEY: VALUE pattern (might be part of a block)
-                cleaned_lines.append(line)
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append(line)
+            continue
+            
+        # Check if this line looks like a key definition: "key:", "  key:", or "key: |-"
+        key_match = re.match(r'^(\s*)([\w_-]+):\s*(.*)$', line)
+        
+        if key_match:
+            indent, key, value = key_match.groups()
+            
+            # Reset block mode if we see a key at level 0 or a known primary key at shallow level
+            if not indent or (key in primary_keys and len(indent) <= 2):
+                block_mode = False
+            
+            # If not in block mode, check for unquoted values containing colons
+            # We ONLY check the value part for colons to avoid quoting booleans/numbers
+            if not block_mode and not "|-" in value and ":" in value:
+                v_strip = value.strip()
+                # If the value contains colons and isn't already quoted
+                if v_strip and not (v_strip.startswith('"') or v_strip.startswith("'")):
+                    # Skip quoting for boolean-like values just in case
+                    if v_strip.lower() not in ["true", "false", "null", "none"]:
+                        # Wrap the value in double quotes and escape existing quotes
+                        escaped_v = v_strip.replace('"', '\\"')
+                        line = f"{indent}{key}: \"{escaped_v}\""
+            
+            # If this line starts a block scalar, enter block mode
+            if "|-" in value:
+                block_mode = True
+            elif block_mode:
+                # If we are in block mode, ensure this line (which looks like a key) is indented
+                if not line.startswith("  "):
+                    line = "  " + line
+            
+            cleaned_lines.append(line)
         else:
+            # Literal content line (e.g., part of a block scalar or a list item)
+            if block_mode:
+                # Ensure all block content has at least 2 spaces of indentation
+                if not line.startswith("  "):
+                    line = "  " + line
             cleaned_lines.append(line)
             
     return "\n".join(cleaned_lines)
+
+def is_null_value(val):
+    """
+    Checks if a value from an LLM response should be treated as null.
+    Handles None, empty strings, and string literals like "null", "none", etc.
+    """
+    if val is None:
+        return True
+    if isinstance(val, str):
+        normalized = val.strip().lower()
+        # Remove trailing/leading quotes that LLM might add in block scalars
+        normalized = normalized.strip("'\" \n")
+        if normalized in ["null", "none", "n/a", "unknown", ""]:
+            return True
+    return False
 
 def execute_fetch(step, memory, conversation, tone_text, llm_model):
     """
@@ -168,8 +221,9 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
             
             # Store found fields in memory
             for field_name in target_fields:
-                if field_name in fields_data and fields_data[field_name] is not None:
-                    memory.set_variable(field_name, fields_data[field_name])
+                val = fields_data.get(field_name)
+                if not is_null_value(val):
+                    memory.set_variable(field_name, val)
             
             # Check if we now have all fields
             still_missing = [f for f in target_fields if memory.get_variable(f) is None]
@@ -200,7 +254,9 @@ def execute_fetch(step, memory, conversation, tone_text, llm_model):
         else:
             # Single field response format (backward compatible)
             if result.get('found'):
-                memory.set_variable(target_fields[0], result.get('value'))
+                val = result.get('value')
+                if not is_null_value(val):
+                    memory.set_variable(target_fields[0], val)
                 # After setting, check if we should continue
                 if memory.get_variable(target_fields[0]) is not None:
                      # For single field fetch, if we found it, we might be done or need to check next segment
@@ -261,7 +317,9 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
             condition_met = condition_met.lower() == 'true'
 
         if result.get('found'):
-            memory.set_variable(field, result.get('value'))
+            val = result.get('value')
+            if not is_null_value(val):
+                memory.set_variable(field, val)
         
         if condition_met:
             # Condition met -> execute 'then' steps
@@ -306,8 +364,11 @@ def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
     # Format memory info for prompts
     memory_info = memory.get_variables_as_json()
     
+    # Get comment if provided
+    comment = step.get('comment')
+    
     # Call prompt with field names
-    prompt = prompts.get_fetch_with_message_prompt(target_fields, resolved_message, conv_text, tone_text, memory_info)
+    prompt = prompts.get_fetch_with_message_prompt(target_fields, resolved_message, conv_text, tone_text, memory_info, comment)
     
     if DEBUG_MODE:
         print("--- Fetch with Message Prompt ---")
@@ -337,8 +398,9 @@ def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model)
             
             # Store found fields in memory
             for field_name in target_fields:
-                if field_name in fields_data and fields_data[field_name] is not None:
-                    memory.set_variable(field_name, fields_data[field_name])
+                val = fields_data.get(field_name)
+                if not is_null_value(val):
+                    memory.set_variable(field_name, val)
             
             # Check if we now have all fields
             still_missing = [f for f in target_fields if memory.get_variable(f) is None]
@@ -381,7 +443,9 @@ def execute_reply(step, memory, conversation, tone_text, llm_model):
     conv_text = memory.get_history_as_text()
     # Format memory info for prompts
     memory_info = memory.get_variables_as_json()
-    prompt = prompts.get_reply_prompt(resolved_message, tone_text, conv_text, memory_info)
+    # Get comment if provided
+    comment = step.get('comment')
+    prompt = prompts.get_reply_prompt(resolved_message, tone_text, conv_text, memory_info, comment)
     
     if DEBUG_MODE:
         print("--- Reply Prompt ---")
@@ -411,7 +475,9 @@ def execute_reply_exact_message(step, memory, conversation, tone_text, llm_model
     resolved_message = memory.resolve_templates(message_template)
     
     conv_text = memory.get_history_as_text()
-    prompt = prompts.get_reply_exact_message_prompt(resolved_message, tone_text, conv_text)
+    # Get comment if provided
+    comment = step.get('comment')
+    prompt = prompts.get_reply_exact_message_prompt(resolved_message, tone_text, conv_text, comment)
     
     if DEBUG_MODE:
         print("--- Reply Exact Message Prompt ---")
@@ -476,7 +542,9 @@ def execute_condition(step, memory, conversation, tone_text, llm_model):
     conv_text = memory.get_history_as_text()
     # Format memory info consistently with fetch prompts
     memory_info = memory.get_variables_as_json()
-    prompt = prompts.get_condition_eval_prompt(condition_str, memory_info, conv_text)
+    # Get comment if provided
+    comment = step.get('comment')
+    prompt = prompts.get_condition_eval_prompt(condition_str, memory_info, conv_text, comment)
     
     if DEBUG_MODE:
         print("--- Condition Prompt ---")
@@ -535,7 +603,8 @@ def execute_conditional_with_message(step, memory, conversation, tone_text, llm_
         conv_text,
         tone_text,
         message_on_true=message_on_true,
-        message_on_false=message_on_false
+        message_on_false=message_on_false,
+        comment=step.get('comment')
     )
     
     if DEBUG_MODE:
@@ -597,6 +666,17 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
     if not tools.has_tool(tool_name):
         return StepExecutionResult("failed", message=f"Tool {tool_name} not found")
 
+    # Prepare positional inputs if present (used as hints for smart_tool and as args for normal tool)
+    input_list = None
+    if 'input' in step:
+        input_value = step['input']
+        if isinstance(input_value, list):
+            input_list = [memory.resolve_templates(v) if isinstance(v, str) else v for v in input_value]
+        else:
+            input_list = [memory.resolve_templates(input_value) if isinstance(input_value, str) else input_value]
+
+    skip_post_filter = False
+
     # Smart Tool Resolver Logic
     if step.get('smart_tool'):
         logger.info(f"Using smart tool resolver for tool: {tool_name}")
@@ -610,7 +690,8 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
         conv_text = memory.get_history_as_text()
         
         prompt = prompts.get_smart_tool_resolver_prompt(
-            tool_name, tool_description, tool_parameters, memory_json, tone_text, conv_text
+            tool_name, tool_description, tool_parameters, memory_json, tone_text, conv_text, 
+            step.get('comment'), input_data=input_list
         )
         
         if DEBUG_MODE:
@@ -639,8 +720,9 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
             result = tools.execute(tool_name, **resolved_args)
             logger.info(f"tool {tool_name} returned: {result} (type: {type(result)})")
             
-            # After successful tool call, we continue to filter/set_variables logic below
-            # But we must skip the normal argument preparation logic
+            # If we used the smart tool resolver, we skip the post-filter prompt because 
+            # the comment was already incorporated into the resolver prompt.
+            skip_post_filter = True
             
         except Exception as e:
             logger.error(f"Smart tool resolver failed: {e}")
@@ -699,21 +781,10 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
                 logger.error(f"calculation failed: {e}")
                 return StepExecutionResult("failed")
         
-        # Prepare arguments from step
-        # Extract 'input' if present (workflow syntax for positional args)
-        input_list = None
-        if 'input' in step:
-            input_value = step['input']
-            if isinstance(input_value, list):
-                # Resolve templates in input list
-                input_list = [memory.resolve_templates(v) if isinstance(v, str) else v for v in input_value]
-            else:
-                # Single value, wrap in list
-                input_list = [memory.resolve_templates(input_value) if isinstance(input_value, str) else input_value]
         
         # Prepare keyword arguments (all other fields except reserved ones)
         kwargs = {}
-        reserved_keys = ['id', 'action', 'tool_name', 'set_variables', 'filter', 'then', 'else', 'input', 'smart_tool']
+        reserved_keys = ['id', 'action', 'tool_name', 'set_variables', 'comment', 'then', 'else', 'input', 'smart_tool']
         for key, value in step.items():
             if key in reserved_keys:
                 continue
@@ -745,13 +816,13 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
             logger.error(f"tool call {tool_name} failed: {e}")
             return StepExecutionResult("failed", message=str(e))
     
-    # Handle LLM filtering if 'filter' instruction is provided
-    filter_instruction = step.get('filter')
-    if filter_instruction:
-        logger.info(f"Applying filter to tool {tool_name} results: {filter_instruction}")
+    # Handle LLM commenting/filtering if 'comment' instruction is provided
+    comment = step.get('comment')
+    if comment and not skip_post_filter:
+        logger.info(f"Applying comment to tool {tool_name} results: {comment}")
         
-        # Resolve templates in the filter instruction (e.g. {{ cabin }})
-        resolved_filter = memory.resolve_templates(str(filter_instruction))
+        # Resolve templates in the comment instruction (e.g. {{ cabin }})
+        resolved_comment = memory.resolve_templates(str(comment))
         
         # Prepare context for the LLM
         memory_vars_json = memory.get_variables_as_json()
@@ -772,14 +843,14 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
             
         serialized_result = serialize_for_prompt(result)
         
-        prompt = prompts.get_filter_tool_result_prompt(
+        prompt = prompts.get_comment_on_tool_result_prompt(
             json.dumps(serialized_result, indent=2, ensure_ascii=False),
-            resolved_filter,
+            resolved_comment,
             memory_vars_json
         )
         
         if DEBUG_MODE:
-            print("--- Filter Prompt ---")
+            print("--- Comment/Filter Prompt ---")
             print(prompt)
             print("--------------------------------")
             
@@ -789,31 +860,31 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
                 messages=[{"role": "user", "content": prompt}]
             )
             
-            filter_content = clean_json_response(response.choices[0].message.content)
+            comment_content = clean_json_response(response.choices[0].message.content)
             
             if DEBUG_MODE:
-                print("---agent filter output---")
-                print(filter_content)
+                print("---agent comment output---")
+                print(comment_content)
                 
-            filter_data = custom_safe_load(filter_content)
+            comment_data = custom_safe_load(comment_content)
             
             # Update the result with the filtered version
             # If the LLM returned a null result, we keep the original or set to empty list?
             # User said "only then insert it to memory", so we should use the filtered result.
-            if 'result' in filter_data:
-                result = filter_data['result']
-                logger.info(f"Filter reasoning: {filter_data.get('reasoning', 'No reasoning provided')}")
+            if comment_data and 'result' in comment_data:
+                result = comment_data['result']
+                logger.info(f"Comment reasoning: {comment_data.get('reasoning', 'No reasoning provided')}")
             else:
-                logger.warning(f"Filter action did not return a 'result' field. Response: {filter_content}")
+                logger.warning(f"Comment action did not return a 'result' field. Response: {comment_content}")
                 
         except Exception as e:
-            logger.error(f"Error during tool result filtering: {e}")
+            logger.error(f"Error during tool result commenting: {e}")
             # In case of LLM failure, we can either fail the whole step or continue with original results.
             # Usually better to fail if filtering was required for safety/logic.
             # But here let's continue with a warning to be robust, or should we fail?
             # User said "only then insert it to memory", suggesting filtering is crucial.
             # Let's fail for now to be safe.
-            return StepExecutionResult("failed", message=f"Failed to filter tool results: {str(e)}")
+            return StepExecutionResult("failed", message=f"Failed to process comment on tool results: {str(e)}")
     
     # Handle set_variables mapping
     # Supports multiple formats:
@@ -903,7 +974,8 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools,
         tools_available,
         memory_variables_json,
         conv_text,
-        tone_text
+        tone_text,
+        step.get('comment')
     )
     
     if DEBUG_MODE:
@@ -949,7 +1021,7 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools,
         result_value = result.get('result')
         
         # Store in memory
-        if set_variable:
+        if set_variable and not is_null_value(result_value):
             memory.set_variable(set_variable, result_value)
             
         if set_variables:
@@ -957,17 +1029,21 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools,
             if isinstance(set_variables, dict):
                 # Dict format: {"new_name": "old_name"} - for instruction, we map result_value to new_name
                 for new_name in set_variables.keys():
-                    memory.set_variable(new_name, result_value)
+                    if not is_null_value(result_value):
+                        memory.set_variable(new_name, result_value)
             elif isinstance(set_variables, list):
                 # List format: ["var1", "var2"] or [{"new_name": "old_name"}]
                 for item in set_variables:
                     if isinstance(item, dict):
                         for new_name in item.keys():
-                            memory.set_variable(new_name, result_value)
+                            if not is_null_value(result_value):
+                                memory.set_variable(new_name, result_value)
                     else:
-                        memory.set_variable(item, result_value)
+                        if not is_null_value(result_value):
+                            memory.set_variable(item, result_value)
             elif isinstance(set_variables, str):
-                memory.set_variable(set_variables, result_value)
+                if not is_null_value(result_value):
+                    memory.set_variable(set_variables, result_value)
                 
         if result_value is None:
             logger.warning(f"instruction task returned null result")
