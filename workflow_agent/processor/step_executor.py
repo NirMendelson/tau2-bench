@@ -57,6 +57,7 @@ def clean_json_response(response_text):
     """
     Cleans the LLM response to ensure it's valid JSON/YAML.
     Removes markdown code blocks if present.
+    Also sanitizes YAML values by replacing unquoted colons with dashes to prevent parsing errors.
     """
     response_text = response_text.strip()
     if response_text.startswith("```"):
@@ -66,8 +67,41 @@ def clean_json_response(response_text):
         # Remove last line if it is ```
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
-        response_text = "\n".join(lines)
-    return response_text
+        response_text = "\n".join(lines).strip()
+    
+    # If the response is valid JSON, we don't want to touch it as colons are part of the syntax
+    try:
+        json.loads(response_text)
+        return response_text
+    except:
+        pass
+
+    # Sanitization for YAML: replace colons in unquoted values with dashes
+    lines = response_text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        if ":" in line:
+            # Check if it looks like a YAML key-value pair: KEY: VALUE
+            # We look for the first colon that is followed by a space or is at the end of the line
+            match = re.match(r'^(\s*[\w_-]+):\s*(.*)$', line)
+            if match:
+                key = match.group(1)
+                value = match.group(2)
+                
+                # If the value contains extra colons and isn't quoted, sanitize it
+                stripped_value = value.strip()
+                if ":" in stripped_value and not (stripped_value.startswith('"') or stripped_value.startswith("'")):
+                    # Replace colons with dashes in the value
+                    value = value.replace(":", "-")
+                
+                cleaned_lines.append(f"{key}: {value}")
+            else:
+                # Doesn't match KEY: VALUE pattern (might be part of a block)
+                cleaned_lines.append(line)
+        else:
+            cleaned_lines.append(line)
+            
+    return "\n".join(cleaned_lines)
 
 def execute_fetch(step, memory, conversation, tone_text, llm_model):
     """

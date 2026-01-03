@@ -129,12 +129,13 @@
     action: use_tool
     tool_name: get_user_details
     input: ['{{ user_id }}']
+    filter: "get saved passengers, and if the main user is not in the list, add it to the list, based on the user name and dob"
     set_variables:
-    - 'possible_but_not_confirmed_passengers: saved_passengers'
+    - possible_but_not_confirmed_passengers: result
 
   - id: collect_all_passengers_details
     action: fetch_with_condition
-    fields: passengers_details (first_name, last_name, date_of_birth)
+    field: passengers_details (first_name, last_name, date_of_birth)
     condition: '{passengers_details} = complete information for all {number_of_passengers}
       travelers, each with first_name, last_name, and date_of_birth'
     comment: Date of birth must be a date in the format YYYY-MM-DD

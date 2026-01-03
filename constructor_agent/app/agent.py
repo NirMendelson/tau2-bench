@@ -15,23 +15,23 @@ SYSTEM_PROMPT = """You are the 'Constructor Agent' - a precise workflow architec
 You work EXACTLY like Cursor or Antigravity: you search first, read carefully, make surgical edits, and validate before proposing.
 
 ### CORE PRINCIPLES (CURSOR MINDSET):
-1. **Search Before You Act**: NEVER assume you know the structure. Always use `search_workflow_content` or `list_workflows` first.
-2. **Read Precisely**: Use `read_workflow_step` to examine specific steps, not entire workflows unless necessary.
-3. **Surgical Edits Only**: Modify ONLY what needs to change. Use `propose_step_modification` for targeted changes.
-4. **Validate Incrementally**: Use `validate_step` to check individual steps, then `validate_proposed_workflow` for the full workflow.
-5. **Never Delete Accidentally**: Preserve 100% of existing logic unless explicitly asked to remove it.
-6. **Show Clear Diffs**: When proposing changes, always explain what changed and why.
+1. **Search Before You Act**: NEVER assume you know the structure. Always use `search_workflow_content`, `grep_search`, or `list_workflows` first.
+2. **Read Precisely**: Use `read_workflow_step` for workflows or `read_file` for code to examine specific parts.
+3. **Understand the Tools**: Use `grep_search` and `read_file` to look at actual Python tool definitions in the src/ directory. This ensures you use the correct parameters in your workflows.
+4. **Surgical Edits Only**: Modify ONLY what needs to change. Use `propose_step_modification` for targeted changes.
+5. **Validate Incrementally**: Use `validate_step` to check individual steps, then `validate_proposed_workflow` for the full workflow.
+6. **Never Delete Accidentally**: Preserve 100% of existing logic unless explicitly asked to remove it.
 7. **Read around your changes**: Use `read_workflow_step` to examine the steps around your changes to understand the context.
 
 ### YOUR WORKFLOW (FOLLOW THIS EXACTLY):
 For ANY user request:
-1. **Explore**: Use `search_workflow_content` to find relevant workflows/steps
-2. **Read**: Use `read_workflow_step` to examine the specific area you'll modify
-3. **Plan**: Think about the minimal change needed
-4. **Validate Step**: Use `validate_step` to check your proposed step is valid CSPL
-5. **Propose**: Use `propose_step_modification` or `propose_step_insertion` with clear explanation
-6. **Final Validation**: Use `validate_proposed_workflow` to ensure the whole workflow is still valid
-7. **Submit**: Use `submit_final_proposal` with a clear diff showing before/after
+1. **Explore**: Use `search_workflow_content` or `grep_search` to find relevant workflows, steps, or tool definitions.
+2. **Read**: Use `read_workflow_step` or `read_file` to examine the specific area you'll modify and the tools you'll use.
+3. **Plan**: Think about the minimal change needed.
+4. **Validate Step**: Use `validate_step` to check your proposed step is valid CSPL.
+5. **Propose**: Use `propose_step_modification` or `propose_step_insertion` with clear explanation.
+6. **Final Validation**: Use `validate_proposed_workflow` to ensure the whole workflow is still valid.
+7. **Submit**: Use `submit_final_proposal` with a clear diff showing before/after.
 
 ### YOU WILL BE WRITING IN CSPL, HERE ARE THE LANGUAGE RULES:
 {cspl_rules}
@@ -127,7 +127,7 @@ class ConstructorAgent:
                 "type": "function",
                 "function": {
                     "name": "search_workflow_content",
-                    "description": "Search for specific text/patterns across workflows. Returns matching steps with their IDs and locations. Use this to find where specific logic exists.",
+                    "description": "Search for specific text/patterns across workflows. Returns matching steps with their IDs, line numbers, and locations. Use this to find where specific logic exists in workflows.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -135,6 +135,35 @@ class ConstructorAgent:
                             "workflow_name": {"type": "string", "description": "Optional: limit search to specific workflow"}
                         },
                         "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "grep_search",
+                    "description": "Standard grep-style search across the entire codebase (Python files, YAMLs, etc.). Use this to find tool definitions, constants, or references outside of workflows.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Text pattern to search for"},
+                            "include": {"type": "string", "description": "Optional glob pattern for files (e.g., '*.py')"}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "Read the content of a file on disk (e.g., a Python tool definition). Use this after finding a file with grep_search.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "Relative path to the file from project root"}
+                        },
+                        "required": ["path"]
                     }
                 }
             },
@@ -379,9 +408,29 @@ class ConstructorAgent:
                                 "workflow": r["workflow"],
                                 "step_id": r["step_id"],
                                 "path": r["path"],
+                                "line": r.get("line"),
                                 "step_preview": self._step_to_yaml(r["step"])[:200] + "..." if len(self._step_to_yaml(r["step"])) > 200 else self._step_to_yaml(r["step"])
                             })
                         tool_result = json.dumps({"query": query, "matches": formatted_results, "count": len(formatted_results)})
+                    
+                    elif name == "grep_search":
+                        query = args.get("query", "")
+                        include = args.get("include")
+                        matches = self.processor.grep_codebase(query, include)
+                        tool_result = json.dumps({"query": query, "matches": matches, "count": len(matches)})
+                    
+                    elif name == "read_file":
+                        path = args.get("path", "")
+                        # Try to find the file from project root
+                        import os
+                        root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                        abs_path = os.path.join(root_dir, path)
+                        
+                        if os.path.exists(abs_path) and os.path.isfile(abs_path):
+                            with open(abs_path, 'r') as f:
+                                tool_result = f.read()
+                        else:
+                            tool_result = f"❌ File not found at '{path}'."
                     
                     elif name == "read_workflow":
                         wf_name = args.get("name", "")

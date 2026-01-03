@@ -97,6 +97,11 @@ class WorkflowProcessor:
                     step_path = f"{path}[{i}]"
                     step_id = step.get('id', f'step_{i}')
                     
+                    # Get line number if available
+                    line_no = None
+                    if hasattr(step, 'lc'):
+                        line_no = step.lc.line + 1 # 1-indexed
+                    
                     # Convert step to string for searching
                     import io
                     s = io.StringIO()
@@ -109,6 +114,7 @@ class WorkflowProcessor:
                             'workflow': wf_name,
                             'step_id': step_id,
                             'path': step_path,
+                            'line': line_no,
                             'step': step
                         })
                     
@@ -132,6 +138,38 @@ class WorkflowProcessor:
                 search_steps(doc['steps'])
         
         return results
+
+    def grep_codebase(self, query: str, include: str = None) -> List[dict]:
+        """Search for text patterns across the codebase (non-workflow files)."""
+        import subprocess
+        import os
+        
+        # Get the project root (assuming it's two levels up from this file)
+        # or just use the current working directory.
+        root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        
+        cmd = ["grep", "-rnI", query, root_dir]
+        if include:
+            cmd.extend(["--include", include])
+            
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            matches = []
+            for line in result.stdout.splitlines():
+                if ":" in line:
+                    parts = line.split(":", 2)
+                    if len(parts) >= 3:
+                        file_path, line_no, content = parts
+                        # Make path relative to root
+                        rel_path = os.path.relpath(file_path, root_dir)
+                        matches.append({
+                            "file": rel_path,
+                            "line": int(line_no),
+                            "content": content.strip()
+                        })
+            return matches[:50] # Limit results
+        except Exception:
+            return []
     
     def get_step_by_id(self, workflow_name: str, step_id: str) -> dict:
         """Get a specific step by its ID from a workflow."""

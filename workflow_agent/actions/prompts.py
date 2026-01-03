@@ -37,7 +37,7 @@ Memory:
 Follow this tone when generating the question:
 {tone_text}
 
-Respond in this format:
+Respond in this format (Can't use ':' in value):
 ```yaml
 found: true/false
 value: <extracted value if found>
@@ -124,7 +124,7 @@ def get_fetch_with_condition_prompt(field_name, condition, conv_text, tone_text,
 
     comment_section = ""
     if comment:
-        comment_section = f"\n\nIMPORTANT CONTEXT ABOUT '{field_name}':\n{comment}\n"
+        comment_section = f"{comment}\n"
 
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. 
 
@@ -157,7 +157,7 @@ IMPORTANT INSTRUCTIONS FOR CONDITION EVALUATION:
 - Use your intelligence to determine if the condition is true or false, don't do a simple string comparison.
 - Examples: 
   * "{{number_of_passengers}} <= 5" means check if the number of passengers is less than or equal to 5
-  * "{{flight_preference}} = direct only" means check if flight preference equals "direct only"
+  * "{{flight_preference}} = direct only" means check if flight_preference equals "direct only"
   * "{{complaint}} contains cancelled flight" means check if the complaint text contains the phrase "cancelled flight"
   * California = CA is true, yes = yeah = I think so = any other phrase with basic meaning of yes
 
