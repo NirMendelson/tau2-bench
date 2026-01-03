@@ -217,7 +217,8 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
                 
                 if sub_wf_list:
                     metadata = sub_wf_list[0] if isinstance(sub_wf_list, list) else sub_wf_list
-                    return_vars = metadata.get('return')
+                    # Support return vars from metadata, or call-site set_variables/set_variable
+                    return_vars = metadata.get('return') or current_step.get('set_variables') or current_step.get('set_variable')
                     
                     if isinstance(sub_wf_list, list):
                         sub_steps = sub_wf_list[1:]

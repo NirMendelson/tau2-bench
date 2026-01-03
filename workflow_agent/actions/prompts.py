@@ -5,7 +5,7 @@ def get_fetch_single_prompt(field_name, conv_text, tone_text, memory_info, comme
     """
     comment_section = ""
     if comment:
-        comment_section = f"\n\nIMPORTANT CONTEXT ABOUT '{field_name}':\n{comment}\n"
+        comment_section = f"{comment}\n"
     
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. Read the conversation carefully and check if you have the field '{field_name}' in the conversation, or can infer it from the conversation.
 {comment_section}
@@ -37,11 +37,13 @@ Memory:
 Follow this tone when generating the question:
 {tone_text}
 
-Respond in this format (Can't use ':' in value):
+Respond in this format:
 ```yaml
 found: true/false
-value: <extracted value if found>
-question: <question to ask if not found>
+value: |-
+  <extracted value if found>
+question: |-
+  <question to ask if not found>
 ```"""
 
 def get_fetch_multi_prompt(field_names, conv_text, tone_text, memory_info, comment=None):
@@ -50,8 +52,8 @@ def get_fetch_multi_prompt(field_names, conv_text, tone_text, memory_info, comme
     or generate questions to ask for missing ones.
     """
     fields_list = ", ".join([f"'{f}'" for f in field_names])
-    fields_yaml = "\n".join([f"  {f}: <extracted value if found, null if not found>" for f in field_names])
-    questions_yaml = "\n".join([f"  {f}: <question to ask if not found>" for f in field_names])
+    fields_yaml = "\n".join([f"  {f}: |-\n    <extracted value if found, null if not found>" for f in field_names])
+    questions_yaml = "\n".join([f"  {f}: |-\n    <question to ask if not found>" for f in field_names])
     
     comment_section = ""
     if comment:
@@ -101,7 +103,8 @@ fields:
 questions:
 {questions_yaml}
 all_found: true/false
-combined_question: <single question if all fields missing, or null if some/all found>
+combined_question: |-
+  <single question if all fields missing, or null if some/all found>
 ```"""
 
 def get_fetch_prompt(field_name, conv_text, tone_text, memory_info="", comment=None):
@@ -173,8 +176,10 @@ Follow this tone when generating the question:
 Respond in this format:
 ```yaml
 found: true/false
-value: <extracted value if found>
-question: <question to ask if not found>
+value: |-
+  <extracted value if found>
+question: |-
+  <question to ask if not found>
 condition_result: <true/false/null>
 ```"""
 
@@ -183,8 +188,8 @@ def get_fetch_with_message_prompt(field_names, message, conversation, tone_text,
     Returns a prompt to check for fields in conversation, and if not found, use the message as the question.
     """
     fields_list = ", ".join([f"'{f}'" for f in field_names])
-    fields_yaml = "\n".join([f"  {f}: <extracted value if found, null if not found>" for f in field_names])
-    questions_yaml = "\n".join([f"  {f}: <question to ask if not found>" for f in field_names])
+    fields_yaml = "\n".join([f"  {f}: |-\n    <extracted value if found, null if not found>" for f in field_names])
+    questions_yaml = "\n".join([f"  {f}: |-\n    <question to ask if not found>" for f in field_names])
     
     return f"""You are an intelligence agent. You have great capabilities to read between the lines and infer information. Read the conversation carefully and check if you have the fields {fields_list} in the conversation, or can infer them from the conversation.
 
@@ -406,7 +411,8 @@ CRITICAL FOR MESSAGE GENERATION (if message is needed):
 Respond in YAML format:
 ```yaml
 condition_result: true/false
-message: <generated message if message is configured for this condition result, null if no message needed>
+message: |-
+  <generated message if message is configured for this condition result, null if no message needed>
 ```"""
 
 def get_instruction_prompt(instruction_text, tools_available, memory_variables, conversation_context, tone_text):
@@ -452,8 +458,10 @@ IMPORTANT:
 
 Respond in YAML format:
 ```yaml
-result: <the value to store in the variable, or null if task cannot be completed>
-reasoning: <brief explanation of how you arrived at the result>
+result: |-
+  <the value to store in the variable, or null if task cannot be completed>
+reasoning: |-
+  <brief explanation of how you arrived at the result>
 ```"""
 
 def get_filter_tool_result_prompt(tool_result, filter_instruction, memory_variables_json):
@@ -480,7 +488,46 @@ TASK:
 
 Respond in YAML format:
 ```yaml
-result: <the filtered/altered result object or list>
-reasoning: <brief explanation of what you did>
+result: <the filtered/altered result object or list, use |- if string with colons>
+reasoning: |-
+  <brief explanation of what you did>
 ```"""
 
+def get_smart_tool_resolver_prompt(tool_name, tool_description, tool_parameters, memory_json, tone_text, conversation_context):
+    """
+    Returns a prompt for the LLM to prepare arguments for a tool call.
+    """
+    return f"""You are an intelligence agent responsible for preparing data for a tool call.
+Your job is to map variables from memory into the specific arguments required by the tool.
+
+TOOL: {tool_name}
+DESCRIPTION: {tool_description}
+PARAMETERS (JSON Schema):
+{tool_parameters}
+
+CURRENT MEMORY:
+{memory_json}
+
+TASK:
+1. Identify which variables in memory corresponds to the required parameters for this tool.
+2. Handle naming mismatches (e.g., if the tool wants 'flight_type' but memory has 'trip_type').
+3. Handle type conversions (e.g., if the tool wants an integer but memory has a string).
+4. Handle complex structures (e.g., if the tool wants a list of objects but memory has individual variables or a different list structure).
+5. If a parameter is required but not found in memory, try to infer it from context if possible, or use a reasonable default (like 0 for baggage or 'no' for insurance) ONLY if it's safe to do so.
+6. Return the arguments as a dictionary where keys are parameter names.
+
+IMPORTANT:
+- Be precise. The tool will fail if the format is incorrect.
+- For list of objects (like passengers or flights), ensure each object follows the schema.
+- If the tool expects a list of flights, and there are multiple flight segments in the trip, include all of them.
+
+CRITICAL: Always wrap string values in double quotes (e.g., insurance: "no"), especially for "yes", "no", "true", or "false", to prevent YAML parsing errors.
+
+Respond in YAML format (use |- for string values with colons or newlines):
+```yaml
+arguments:
+  arg1: <value1>
+  arg2: <value2>
+reasoning: |-
+  <brief explanation of mappings and transformations>
+```"""

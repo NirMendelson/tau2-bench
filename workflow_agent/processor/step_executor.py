@@ -586,7 +586,7 @@ def execute_conditional_with_message(step, memory, conversation, tone_text, llm_
         logger.error(f"error parsing conditional_with_message response: {e}")
         return StepExecutionResult("failed", message="Failed to parse condition evaluation.")
 
-def execute_use_tool(step, memory, tools, llm_model):
+def execute_use_tool(step, memory, tools, llm_model, tone_text):
     """
     Calls an external tool (e.g., airline tools) and handles the output.
     Uses ToolExecutor to handle workflow syntax (input lists) to tool parameters.
@@ -596,103 +596,154 @@ def execute_use_tool(step, memory, tools, llm_model):
     # Check if tool exists
     if not tools.has_tool(tool_name):
         return StepExecutionResult("failed", message=f"Tool {tool_name} not found")
-    
-    # Special handling for calculate
-    if tool_name == 'calculate':
-        # Support both 'expression' and 'input' fields
-        expression = step.get('expression')
-        if expression is None and 'input' in step:
-            input_value = step.get('input')
-            if isinstance(input_value, list) and len(input_value) > 0:
-                # Extract expression from input list (first element)
-                expression = input_value[0]
-            elif isinstance(input_value, str):
-                expression = input_value
+
+    # Smart Tool Resolver Logic
+    if step.get('smart_tool'):
+        logger.info(f"Using smart tool resolver for tool: {tool_name}")
+        tool_obj = tools.get_tool(tool_name)
+        if not tool_obj:
+            return StepExecutionResult("failed", message=f"Tool object for {tool_name} not found")
         
-        if expression is None:
-            logger.error("calculate tool missing 'expression' or 'input' field")
-            return StepExecutionResult("failed", message="calculate tool missing 'expression' or 'input' field")
+        tool_description = tool_obj._get_description()
+        tool_parameters = json.dumps(tool_obj.params.model_json_schema(), indent=2)
+        memory_json = memory.get_variables_as_json()
+        conv_text = memory.get_history_as_text()
         
-        resolved_expr = memory.resolve_templates(expression)
+        prompt = prompts.get_smart_tool_resolver_prompt(
+            tool_name, tool_description, tool_parameters, memory_json, tone_text, conv_text
+        )
+        
+        if DEBUG_MODE:
+            print("--- Smart Tool Resolver Prompt ---")
+            print(prompt)
+            print("--------------------------------")
+            
         try:
-            result = tools.execute('calculate', **{'expression': resolved_expr})
+            response = litellm.completion(
+                model=llm_model,
+                messages=[{"role": "user", "content": prompt}]
+            )
             
-            # Handle set_variables for calculate (result is a simple value, not an object)
-            set_vars = step.get('set_variables', [])
-            if set_vars:
-                # For calculate, the result is a simple value (string/number)
-                # Store it directly in the variable name(s) specified
-                if isinstance(set_vars, dict):
-                    # Dict format: {"new_name": "old_name"} - but for calculate, just use new_name
-                    for new_name in set_vars.keys():
-                        memory.set_variable(new_name, result)
-                else:
-                    # List format: ["var1", "var2"] - store result in each variable
-                    for item in set_vars:
-                        if isinstance(item, dict):
-                            # Dictionary mapping: {"new_name": "old_name"} - use new_name
-                            for new_name in item.keys():
-                                memory.set_variable(new_name, result)
-                        else:
-                            # String: store result directly in this variable name
-                            var_name = item
-                            memory.set_variable(var_name, result)
-            else:
-                # Default storage if no set_variables specified
-                memory.set_variable(f"{tool_name}_result", result)
-                # Also store as calculate_result as per some workflow examples
-                memory.set_variable("calculate_result", result)
+            content = clean_json_response(response.choices[0].message.content)
             
-            return StepExecutionResult("completed")
+            if DEBUG_MODE:
+                print("---agent smart tool output---")
+                print(content)
+                
+            resolve_data = custom_safe_load(content)
+            resolved_args = resolve_data.get('arguments', {})
+            logger.info(f"Smart tool resolver reasoning: {resolve_data.get('reasoning')}")
+            
+            # Execute tool with resolved arguments
+            logger.info(f"calling tool {tool_name} with smart resolved arguments: {resolved_args}")
+            result = tools.execute(tool_name, **resolved_args)
+            logger.info(f"tool {tool_name} returned: {result} (type: {type(result)})")
+            
+            # After successful tool call, we continue to filter/set_variables logic below
+            # But we must skip the normal argument preparation logic
+            
         except Exception as e:
-            logger.error(f"calculation failed: {e}")
-            return StepExecutionResult("failed")
+            logger.error(f"Smart tool resolver failed: {e}")
+            return StepExecutionResult("failed", message=f"Smart tool resolver failed: {str(e)}")
     
-    # Prepare arguments from step
-    # Extract 'input' if present (workflow syntax for positional args)
-    input_list = None
-    if 'input' in step:
-        input_value = step['input']
-        if isinstance(input_value, list):
-            # Resolve templates in input list
-            input_list = [memory.resolve_templates(v) if isinstance(v, str) else v for v in input_value]
-        else:
-            # Single value, wrap in list
-            input_list = [memory.resolve_templates(input_value) if isinstance(input_value, str) else input_value]
-    
-    # Prepare keyword arguments (all other fields except reserved ones)
-    kwargs = {}
-    reserved_keys = ['id', 'action', 'tool_name', 'set_variables', 'filter', 'then', 'else', 'input']
-    for key, value in step.items():
-        if key in reserved_keys:
-            continue
-        # Resolve templates in argument values
-        if isinstance(value, str):
-            kwargs[key] = memory.resolve_templates(value)
-        elif isinstance(value, list):
-            # Resolve list of strings
-            kwargs[key] = [memory.resolve_templates(v) if isinstance(v, str) else v for v in value]
-        else:
-            kwargs[key] = value
-    
-    # Execute tool using ToolExecutor
-    try:
-        if input_list is not None:
-            # Use input list (workflow syntax)
-            logger.info(f"calling tool {tool_name} with input_list: {input_list}")
-            result = tools.execute(tool_name, input_list=input_list)
-        elif kwargs:
-            # Use keyword arguments
-            logger.info(f"calling tool {tool_name} with kwargs: {kwargs}")
-            result = tools.execute(tool_name, **kwargs)
-        else:
-            # No arguments provided
-            logger.info(f"calling tool {tool_name} with no arguments")
-            result = tools.execute(tool_name, input_list=[])
-        logger.info(f"tool {tool_name} returned: {result} (type: {type(result)})")
-    except Exception as e:
-        logger.error(f"tool call {tool_name} failed: {e}")
-        return StepExecutionResult("failed", message=str(e))
+    else:
+        # Normal tool resolution (original logic)
+        # Special handling for calculate
+        if tool_name == 'calculate':
+            # Support both 'expression' and 'input' fields
+            expression = step.get('expression')
+            if expression is None and 'input' in step:
+                input_value = step.get('input')
+                if isinstance(input_value, list) and len(input_value) > 0:
+                    # Extract expression from input list (first element)
+                    expression = input_value[0]
+                elif isinstance(input_value, str):
+                    expression = input_value
+            
+            if expression is None:
+                logger.error("calculate tool missing 'expression' or 'input' field")
+                return StepExecutionResult("failed", message="calculate tool missing 'expression' or 'input' field")
+            
+            resolved_expr = memory.resolve_templates(expression)
+            try:
+                result = tools.execute('calculate', **{'expression': resolved_expr})
+                
+                # Handle set_variables for calculate (result is a simple value, not an object)
+                set_vars = step.get('set_variables', [])
+                if set_vars:
+                    # For calculate, the result is a simple value (string/number)
+                    # Store it directly in the variable name(s) specified
+                    if isinstance(set_vars, dict):
+                        # Dict format: {"new_name": "old_name"} - but for calculate, just use new_name
+                        for new_name in set_vars.keys():
+                            memory.set_variable(new_name, result)
+                    else:
+                        # List format: ["var1", "var2"] - store result in each variable
+                        for item in set_vars:
+                            if isinstance(item, dict):
+                                # Dictionary mapping: {"new_name": "old_name"} - use new_name
+                                for new_name in item.keys():
+                                    memory.set_variable(new_name, result)
+                            else:
+                                # String: store result directly in this variable name
+                                var_name = item
+                                memory.set_variable(var_name, result)
+                else:
+                    # Default storage if no set_variables specified
+                    memory.set_variable(f"{tool_name}_result", result)
+                    # Also store as calculate_result as per some workflow examples
+                    memory.set_variable("calculate_result", result)
+                
+                return StepExecutionResult("completed")
+            except Exception as e:
+                logger.error(f"calculation failed: {e}")
+                return StepExecutionResult("failed")
+        
+        # Prepare arguments from step
+        # Extract 'input' if present (workflow syntax for positional args)
+        input_list = None
+        if 'input' in step:
+            input_value = step['input']
+            if isinstance(input_value, list):
+                # Resolve templates in input list
+                input_list = [memory.resolve_templates(v) if isinstance(v, str) else v for v in input_value]
+            else:
+                # Single value, wrap in list
+                input_list = [memory.resolve_templates(input_value) if isinstance(input_value, str) else input_value]
+        
+        # Prepare keyword arguments (all other fields except reserved ones)
+        kwargs = {}
+        reserved_keys = ['id', 'action', 'tool_name', 'set_variables', 'filter', 'then', 'else', 'input', 'smart_tool']
+        for key, value in step.items():
+            if key in reserved_keys:
+                continue
+            # Resolve templates in argument values
+            if isinstance(value, str):
+                kwargs[key] = memory.resolve_templates(value)
+            elif isinstance(value, list):
+                # Resolve list of strings
+                kwargs[key] = [memory.resolve_templates(v) if isinstance(v, str) else v for v in value]
+            else:
+                kwargs[key] = value
+        
+        # Execute tool using ToolExecutor
+        try:
+            if input_list is not None:
+                # Use input list (workflow syntax)
+                logger.info(f"calling tool {tool_name} with input_list: {input_list}")
+                result = tools.execute(tool_name, input_list=input_list)
+            elif kwargs:
+                # Use keyword arguments
+                logger.info(f"calling tool {tool_name} with kwargs: {kwargs}")
+                result = tools.execute(tool_name, **kwargs)
+            else:
+                # No arguments provided
+                logger.info(f"calling tool {tool_name} with no arguments")
+                result = tools.execute(tool_name, input_list=[])
+            logger.info(f"tool {tool_name} returned: {result} (type: {type(result)})")
+        except Exception as e:
+            logger.error(f"tool call {tool_name} failed: {e}")
+            return StepExecutionResult("failed", message=str(e))
     
     # Handle LLM filtering if 'filter' instruction is provided
     filter_instruction = step.get('filter')
@@ -832,11 +883,13 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools,
     # Get available tools
     tools_available = step.get('tools_available', [])
     
-    # Get variable name to set
+    # Get variable name(s) to set
     set_variable = step.get('set_variable')
-    if not set_variable:
-        logger.error("instruction action missing 'set_variable' field")
-        return StepExecutionResult("failed", message="Instruction action missing 'set_variable' field")
+    set_variables = step.get('set_variables')
+    
+    if not set_variable and not set_variables:
+        logger.error("instruction action missing 'set_variable' or 'set_variables' field")
+        return StepExecutionResult("failed", message="Instruction action missing 'set_variable' or 'set_variables' field")
     
     # Get current memory variables (for context)
     memory_variables_json = memory.get_variables_as_json()
@@ -896,14 +949,30 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools,
         result_value = result.get('result')
         
         # Store in memory
-        if result_value is not None:
+        if set_variable:
             memory.set_variable(set_variable, result_value)
-            return StepExecutionResult("completed")
-        else:
-            # Task couldn't be completed
+            
+        if set_variables:
+            # Handle set_variables mappings (similar to calculate tool or use_tool)
+            if isinstance(set_variables, dict):
+                # Dict format: {"new_name": "old_name"} - for instruction, we map result_value to new_name
+                for new_name in set_variables.keys():
+                    memory.set_variable(new_name, result_value)
+            elif isinstance(set_variables, list):
+                # List format: ["var1", "var2"] or [{"new_name": "old_name"}]
+                for item in set_variables:
+                    if isinstance(item, dict):
+                        for new_name in item.keys():
+                            memory.set_variable(new_name, result_value)
+                    else:
+                        memory.set_variable(item, result_value)
+            elif isinstance(set_variables, str):
+                memory.set_variable(set_variables, result_value)
+                
+        if result_value is None:
             logger.warning(f"instruction task returned null result")
-            memory.set_variable(set_variable, None)
-            return StepExecutionResult("completed")  # Still completed, just with null value
+            
+        return StepExecutionResult("completed")
             
     except Exception as e:
         logger.error(f"error parsing instruction response: {e}")
@@ -942,7 +1011,8 @@ def execute_subworkflow_recursive(sub_name, memory, conversation, tone_text, llm
         return StepExecutionResult("failed", message=f"Subworkflow {sub_name} not found")
         
     metadata = sub_def[0] if isinstance(sub_def, list) else sub_def
-    return_vars = metadata.get('return')
+    # Support return vars from metadata, or call-site set_variables/set_variable
+    return_vars = metadata.get('return') or step.get('set_variables') or step.get('set_variable')
     
     if isinstance(sub_def, list):
         sub_steps = sub_def[1:]
@@ -1013,7 +1083,7 @@ def execute_step(step, memory, conversation, tone_text, llm_model, tools, workfl
     elif action == 'conditional_with_message':
         result = execute_conditional_with_message(step, memory, conversation, tone_text, llm_model)
     elif action == 'use_tool':
-        result = execute_use_tool(step, memory, tools, llm_model)
+        result = execute_use_tool(step, memory, tools, llm_model, tone_text)
     elif action == 'instruction':
         result = execute_instruction(step, memory, conversation, tone_text, llm_model, tools, workflows)
     elif action == 'loop':
@@ -1058,7 +1128,14 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools, workfl
     loop_variable_name = step.get('loop_variable')
     loop_steps = step.get('loop_steps')
     subaction = step.get('subaction')
-    set_variable_name = step.get('set_variable')
+    set_variable_name = step.get('set_variable') or step.get('set_variables')
+    
+    # Normalize set_variable_name if it's a list (take first one for loop collection)
+    if isinstance(set_variable_name, list) and len(set_variable_name) > 0:
+        if isinstance(set_variable_name[0], str):
+            set_variable_name = set_variable_name[0]
+        elif isinstance(set_variable_name[0], dict):
+            set_variable_name = list(set_variable_name[0].keys())[0]
     
     if not loop_over_var or not loop_variable_name:
          return StepExecutionResult("failed", message="Loop action missing required fields (loop_over, loop_variable)")

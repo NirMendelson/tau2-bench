@@ -55,7 +55,7 @@
   # Step 2: Get trip details
 - id: fetch_trip_details
   action: fetch
-  fields: [trip_type, origin, destination]
+  fields: [flight_type, origin, destination]
   comment: origin and destination have to be 3 letter airport codes.
 
 - id: fetch_date
@@ -129,7 +129,8 @@
     action: use_tool
     tool_name: get_user_details
     input: ['{{ user_id }}']
-    filter: "get saved passengers, and if the main user is not in the list, add it to the list, based on the user name and dob"
+    filter: "get saved passengers, and if the main user is not in the list, add it
+      to the list, based on the user name and dob"
     set_variables:
     - possible_but_not_confirmed_passengers: result
 
@@ -138,39 +139,71 @@
     field: passengers_details (first_name, last_name, date_of_birth)
     condition: '{passengers_details} = complete information for all {number_of_passengers}
       travelers, each with first_name, last_name, and date_of_birth'
-    comment: Date of birth must be a date in the format YYYY-MM-DD
+    comment: Date of birth must be a date in the format YYYY-MM-DD, if user ask 
+      you to take pieces of information from the data, you can use 
+      possible_but_not_confirmed_passengers.
+
+  - id: ask_preferred_payment_method
+    action: fetch_with_message
+    field: preferred_payment_method
+    message: What is your preferred payment method? You can pay with either 1 certificate, 1 credit card, or up to 3 gift cards.
 
   - id: collect_payment_methods
     action: use_tool
     tool_name: get_user_details
     input: ["{{ user_id }}"]
-    filter: "count_travel_certificates <= 1 and count_credit_cards <= 1 and count_gift_cards
-      <= 3"
+    filter: "get the details of the preferred payment method"
     set_variables:
-    - travel_certificates
-    - credit_cards
-    - gift_cards
+    - preferred_payment_method_details: result
+
+  - id: fetch_wanted_checked_bags_per_passenger
+    action: fetch
+    field: wanted_checked_bags_per_passenger
+    comment: have to be a number
+
+  - id: get_allowed_checked_bags
+    action: use_subworkflow
+    subworkflow: GivingCheckedBagInformation
+    set_variables:
+    - allowed_checked_bags_per_passenger
+
+  - id: calculate_total_price
+    action: instruction
+    instruction: |
+      you need to calculate the total price the user needs to pay for the reservation.
+      1. find what cabin the user wants to book.
+      2. sum the price of each flight in flight results BY CABIN.
+      3. multiple the price by number of passengers
+
+      Return the total price.
+    set_variables:
+    - total_price
 
   - id: get_explicit_confirmation
     action: fetch
-    field: explicit_confirmation
-    condition: "{explicit_confirmation} = yes"
-    then:
-    - id: book_reservation
-      action: use_tool
-      tool_name: book_reservation
-      input: ["{{ user_id }}", "{{ origin }}", "{{ destination }}", "{{ flight_type
-          }}", "{{ cabin }}", "{{ flights }}", "{{ passengers_details }}", "{{ payment_methods
-          }}", "{{ total_baggages }}", "{{ nonfree_baggages }}", "{{ travel_insurance
-          }}"]
-      set_variables:
-      - reservation_id
+    field: explicit_reservation_confirmation
+    comment: we have to make sure we have a explicit confirmation from the user 
+      on all of the reservation details. if there is no, ask for it. write the 
+      flight details including- origin, destination, date, flight type, cabin, 
+      flights, passengers_details, payment_methods, total_baggages, 
+      travel_insurance, price
 
-    - id: display_reservation_confirmation
-      action: fetch_with_message
-      field: reservation_id
-      message: |
-        Your reservation has been confirmed. Your reservation ID is {{ reservation_id }}.
+  - id: book_reservation
+    action: use_tool
+    smart_tool: true
+    tool_name: book_reservation
+    input: ["{{ user_id }}", "{{ origin }}", "{{ destination }}", "{{ flight_type
+        }}", "{{ cabin }}", "{{ flights }}", "{{ passengers_details }}", "{{ preferred_payment_method_details
+        }}", "{{ total_baggages }}", "{{ nonfree_baggages }}", "{{ travel_insurance
+        }}", "{{ total_price }}"]
+    filter: "book the reservation"
+    set_variables:
+    - new_reservation_id
+
+  - id: display_reservation_confirmation
+    action: reply
+    message: |
+      Your reservation has been confirmed. Your reservation ID is {{ new_reservation_id }}.
   else:
   - id: inform_max_passengers
     action: reply
@@ -179,6 +212,7 @@
 
 ---
 - subworkflow: GivingCheckedBagInformation
+  return: allowed_checked_bags_per_passenger
   when: "user asks about checked bag allowance or baggage information"
 - id: fetch_user_id
   action: fetch
@@ -209,7 +243,7 @@
     then:
     - id: set_free_bags
       action: set_variable
-      variable: free_checked_bags_per_passenger
+      variable: allowed_checked_bags_per_passenger
       value: 0
     else:
     - id: check_regular_economy
@@ -218,12 +252,12 @@
       then:
       - id: set_free_bags
         action: set_variable
-        variable: free_checked_bags_per_passenger
+        variable: allowed_checked_bags_per_passenger
         value: 1
       else:
       - id: set_free_bags
         action: set_variable
-        variable: free_checked_bags_per_passenger
+        variable: allowed_checked_bags_per_passenger
         value: 2
   else:
   - id: check_silver
@@ -236,7 +270,7 @@
       then:
       - id: set_free_bags
         action: set_variable
-        variable: free_checked_bags_per_passenger
+        variable: allowed_checked_bags_per_passenger
         value: 1
       else:
       - id: check_silver_economy
@@ -245,12 +279,12 @@
         then:
         - id: set_free_bags
           action: set_variable
-          variable: free_checked_bags_per_passenger
+          variable: allowed_checked_bags_per_passenger
           value: 2
-        else:
         - id: set_free_bags
+        else:
           action: set_variable
-          variable: free_checked_bags_per_passenger
+          variable: allowed_checked_bags_per_passenger
           value: 3
     else:
             # Must be gold member
@@ -260,7 +294,7 @@
       then:
       - id: set_free_bags
         action: set_variable
-        variable: free_checked_bags_per_passenger
+        variable: allowed_checked_bags_per_passenger
         value: 2
       else:
       - id: check_gold_economy
@@ -269,12 +303,12 @@
         then:
         - id: set_free_bags
           action: set_variable
-          variable: free_checked_bags_per_passenger
+          variable: allowed_checked_bags_per_passenger
           value: 3
         else:
         - id: set_free_bags
           action: set_variable
-          variable: free_checked_bags_per_passenger
+          variable: allowed_checked_bags_per_passenger
           value: 3
 ---
 - subworkflow: ModifyBaggage
