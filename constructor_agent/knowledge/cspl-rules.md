@@ -143,6 +143,26 @@ Manually set a variable.
     value: 0
   ```
 
+### 9. `instruction`
+Used when you need the LLM to perform complex logic, calculations, data processing, or other tasks that cannot be easily expressed with other action types. The LLM will execute the instruction and set variables based on the result.
+- `instruction`: Required. Text instructions describing what the LLM should do. Can be multi-line using `|`.
+- `set_variable`: (Optional) Name of a single variable to set from the instruction result.
+- `set_variables`: (Optional) List of variable names to set from the instruction result.
+- **Examples**:
+  ```yaml
+  - id: calculate_total_price
+    action: instruction
+    instruction: |
+      you need to calculate the total price the user needs to pay for the reservation.
+      1. find what cabin the user wants to book.
+      2. sum the price of each flight in flight results BY CABIN.
+      3. multiple the price by number of passengers
+
+      Return the total price.
+    set_variables:
+      - total_price
+  ```
+
 ### Logic & Template Rules
 - **Interpolation**: Use `{{ variable_name }}` to insert variable values into strings (e.g., in `message` or `input` fields).
 - **Conditions**: Use `{variable_name}` inside condition strings (single braces, no spaces around variable name).

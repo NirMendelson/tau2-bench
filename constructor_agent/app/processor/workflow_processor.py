@@ -115,115 +115,58 @@ class WorkflowProcessor:
         
         return find_step(doc[1:] if isinstance(doc, list) else doc.get('steps', []))
 
-    def modify_step(self, workflow_name: str, step_id: str, new_step: dict) -> bool:
+    def update_workflow_steps(self, workflow_name: str, steps: List[dict]) -> bool:
+        """Overwrites all steps in a workflow/subworkflow with a new list."""
         doc = self.get_document_by_name(workflow_name)
         if not doc: return False
-
-        def replace_step(steps):
-            if not isinstance(steps, list): return False
-            for i, step in enumerate(steps):
-                if not isinstance(step, dict): continue
-                if step.get('id') == step_id:
-                    steps[i] = new_step
-                    return True
-                for key in ['then', 'else']:
-                    if key in step:
-                        block = step[key]
-                        if isinstance(block, list):
-                            if replace_step(block): return True
-                        elif isinstance(block, dict):
-                            if 'steps' in block:
-                                if replace_step(block['steps']): return True
-                            elif block.get('id') == step_id:
-                                step[key] = new_step
-                                return True
-            return False
-        
-        return replace_step(doc if isinstance(doc, list) else doc.get('steps', []))
-
-    def insert_step(self, workflow_name: str, position: dict, new_step: dict) -> bool:
-        doc = self.get_document_by_name(workflow_name)
-        if not doc: return False
-        
-        insert_type = position.get('type') # 'before', 'after', 'at_index'
-        reference = position.get('reference') # step_id or index
-        
-        def insert_in_steps(steps):
-            if not isinstance(steps, list): return False
-            if insert_type == 'at_index':
-                try:
-                    idx = int(reference)
-                    if 0 <= idx <= len(steps):
-                        steps.insert(idx, new_step)
-                        return True
-                except (ValueError, TypeError): return False
-                return False
-            
-            for i, step in enumerate(steps):
-                if not isinstance(step, dict): continue
-                if step.get('id') == reference:
-                    if insert_type == 'before': steps.insert(i, new_step)
-                    elif insert_type == 'after': steps.insert(i + 1, new_step)
-                    return True
-                for key in ['then', 'else']:
-                    if key in step:
-                        block = step[key]
-                        if isinstance(block, list):
-                            if insert_in_steps(block): return True
-                        elif isinstance(block, dict):
-                            if 'steps' in block:
-                                if insert_in_steps(block['steps']): return True
-            return False
         
         if isinstance(doc, list):
-            if insert_type == 'at_index' and reference == 0:
-                doc.insert(1, new_step)
-                return True
-            return insert_in_steps(doc)
-        return insert_in_steps(doc.get('steps', []))
+            # doc[0] is metadata, doc[1:] are steps
+            doc[1:] = steps
+            return True
+        elif 'steps' in doc:
+            doc['steps'] = steps
+            return True
+        return False
 
-    def delete_step(self, workflow_name: str, step_id: str) -> bool:
-        doc = self.get_document_by_name(workflow_name)
-        if not doc: return False
+    def create_workflow(self, name: str, description: str, steps: List[dict], is_subworkflow: bool = False) -> bool:
+        """Creates a new workflow or subworkflow document."""
+        if self.get_document_by_name(name):
+            return False # Already exists
+            
+        metadata_key = "subworkflow" if is_subworkflow else "workflow"
+        new_doc = [
+            {metadata_key: name, "when": description}
+        ]
+        new_doc.extend(steps)
+        self.documents.append(new_doc)
+        return True
 
-        def remove_step(steps):
-            if not isinstance(steps, list): return False
-            for i, step in enumerate(steps):
-                if not isinstance(step, dict): continue
-                if step.get('id') == step_id:
-                    steps.pop(i)
-                    return True
-                for key in ['then', 'else']:
-                    if key in step:
-                        block = step[key]
-                        if isinstance(block, list):
-                            if remove_step(block): return True
-                        elif isinstance(block, dict):
-                            if 'steps' in block:
-                                if remove_step(block['steps']): return True
-                            elif block.get('id') == step_id:
-                                del step[key]
-                                return True
-            return False
-        
-        return remove_step(doc if isinstance(doc, list) else doc.get('steps', []))
-
-    def grep_codebase(self, query: str, include: str = None) -> List[dict]:
+    def grep_codebase(self, query: str, domain: str = "airline") -> List[dict]:
         root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        cmd = ["grep", "-rnI", query, root_dir]
-        if include: cmd.extend(["--include", include])
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            matches = []
-            for line in result.stdout.splitlines():
-                if ":" in line:
-                    parts = line.split(":", 2)
-                    if len(parts) >= 3:
-                        file_path, line_no, content = parts
-                        matches.append({
-                            "file": os.path.relpath(file_path, root_dir),
-                            "line": int(line_no),
-                            "content": content.strip()
-                        })
-            return matches[:50]
-        except Exception: return []
+        
+        # Restrict search to domain-specific tools and the constructor knowledge
+        search_paths = [
+            os.path.join(root_dir, "src/tau2/domains", domain),
+            os.path.join(root_dir, "constructor_agent/knowledge")
+        ]
+        
+        matches = []
+        for path in search_paths:
+            if not os.path.exists(path): continue
+            cmd = ["grep", "-rnI", query, path]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                for line in result.stdout.splitlines():
+                    if ":" in line:
+                        parts = line.split(":", 2)
+                        if len(parts) >= 3:
+                            file_path, line_no, content = parts
+                            matches.append({
+                                "file": os.path.relpath(file_path, root_dir),
+                                "line": int(line_no),
+                                "content": content.strip()
+                            })
+            except Exception: continue
+            
+        return matches[:50]

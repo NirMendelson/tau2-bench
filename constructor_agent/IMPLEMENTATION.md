@@ -1,7 +1,7 @@
-# Implementation Plan: Constructor Agent Rewrite
+# Implementation Plan: Constructor Agent (Cursor-Style)
 
 ## Overview
-This document outlines the architecture and implementation strategy for the Constructor Agent, transitioning from a basic prototype to a robust, conversational, and precise workflow architect. The design is inspired by **Cursor** and **Antigravity**, prioritizing surgical edits, safety, and iterative user feedback.
+This document outlines the architecture and implementation strategy for the Constructor Agent, designed as a **Cursor-style unified conversational agent**. The agent explores the codebase and makes edits in a single natural conversation flow, prioritizing simplicity, speed, and user experience.
 
 ### Design Constraints
 - **Single-user system**: Memory reset on page refresh is acceptable
@@ -12,34 +12,36 @@ This document outlines the architecture and implementation strategy for the Cons
 
 ---
 
-## 1. Architectural Blueprint: The Trinity Loop
+## 1. Architectural Blueprint: Unified Conversational Agent
 
-To ensure accuracy and safety, the agent will operate in a three-phase "Trinity Loop" for every user interaction.
+Inspired by **Cursor/Antigravity**, the agent operates as a single conversational entity that can both explore and edit in the same interaction.
 
-### Phase 1: The Planner (Discovery)
-- **Goal**: Understand intent, map it to the codebase, and formulate a strategy.
+### Single-Phase Architecture
+- **Goal**: Understand intent, explore the codebase, make changes, and explain - all in one conversational flow.
 - **Responsibilities**:
-  - Search the codebase using `search_workflow_content` and `grep_search`.
-  - Read relevant workflow steps and Python tool definitions.
+  - Search the codebase using `search_workflow_content` and `grep_search`
+  - Read relevant workflow steps and Python tool definitions
   - **On-demand knowledge**: Use `read_knowledge(topic)` to retrieve:
     - `cspl-rules.md` - Core YAML syntax and action schemas
     - `examples.md` - Real user prompts and resulting changes
-  - Formulate a clear plan in natural language.
+  - Make edits using `apply_edit` tool
+  - Validate changes automatically (with auto-retry)
+  - Explain what was done in simple, conversational language
 
-### Phase 2: The Executor (Engineering)
-- **Goal**: Translate the plan into exact, minimal YAML modifications across multiple files.
-- **Responsibilities**:
-  - Use granular tools (`propose_step_modification`, `propose_step_insertion`) to update the in-memory state.
-  - Support coordinated edits across `workflow.yaml`, `constants.yaml`, and `tone.yaml`.
-  - Track multiple related edits as a single logical "Change Set".
-  - Maintain the existing formatting and comments (via `ruamel.yaml`).
+### How It Works
+1. **User sends a message** (e.g., "Make the booking ask for gender")
+2. **Agent explores** - Searches for relevant workflows, reads current structure
+3. **Agent edits** - Makes the necessary changes using `apply_edit`
+4. **Agent validates** - Checks YAML syntax and logic (auto-retry if errors)
+5. **Agent explains** - "Done! The booking process now asks for gender right after collecting passenger details."
+6. **User approves** - Changes are written to disk
 
-### Phase 3: The Validator (Verification)
-- **Goal**: Ensure the "Change Set" is logically sound and follows CSPL rules.
-- **Responsibilities**:
-  - Automatic background validation after every execution phase.
-  - **Auto-retry loop**: If validation fails, the agent receives the error and loops back to **Phase 2** automatically without user intervention.
-  - Once valid, generate a **natural language explanation** of the changes for user approval (no technical diffs).
+### Key Difference from Trinity Loop
+- **Before**: Planner → Executor → Validator (3 separate phases, 2+ LLM calls)
+- **Now**: Single agent does everything (1 LLM call, up to 20 tool turns)
+- **Result**: Faster, simpler, more conversational
+
+
 
 ---
 

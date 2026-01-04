@@ -16,29 +16,28 @@ class ExecutorLogic:
 {plan}
 
 ### TECHNICAL LEXICON (Workflow Actions):
-You MUST only use these actions and fields. Do NOT hallucinate new action names (like 'ask' or 'choice').
+You MUST only use these actions. Do NOT hallucinate names.
 
-- `fetch`: {{"field": "name"}} (Check/ask for info)
-- `fetch_with_message`: {{"field": "name", "message": "exact text"}} (Ask with specific prompt)
-- `fetch_with_condition`: {{"field": "name", "condition": "{{{{name}}}} = value"}} (Fetch then branch)
-- `reply`: {{"message": "text template"}} (Send natural response)
-- `set_variable`: {{"variable": "name", "value": "val"}} (Store data)
-- `conditional`: {{"condition": "natural language", "then": [steps]}} (Branching)
-- `use_tool`: {{"tool_name": "name", "input": ["{{{{var}}}}"]}} (Call backend)
-- `instruction`: {{"instruction": "logic", "set_variables": ["name"]}} (Complex logic)
-- `loop`: {{"loop_over": "list", "loop_variable": "item", "subaction": {{...}}}} (Iteration)
-- `use_subworkflow`: {{"subworkflow": "Name"}} (Jump to subworkflow)
+- `fetch`: {{"field": "name"}} (Fetch/Ask for info)
+- `fetch_with_message`: {{"field": "name", "message": "exact text"}}
+- `fetch_with_condition`: {{"field": "name", "condition": "{name} = value"}}
+- `reply`: {{"message": "text template"}}
+- `set_variable`: {{"variable": "name", "value": "val"}}
+- `conditional`: {{"condition": "natural language", "then": [steps]}}
+- `use_tool`: {{"tool_name": "name", "input": ["{{var}}"]}}
+- `instruction`: {{"instruction": "logic", "set_variables": ["name"]}}
+- `loop`: {{"loop_over": "list", "loop_variable": "item", "subaction": {...}}}
+- `use_subworkflow`: {{"subworkflow": "Name"}}
 
 ### YOUR TASK:
-Use the `apply_edit` tool to make changes. You decide the structure - insert, modify, or delete steps as needed.
+Utilize `apply_edit` with `update_workflow_steps` to rewrite a workflow's logic. This is the preferred way to modify existing processes—just provide the complete, updated list of steps for that workflow. 
 
 ### RULES:
-1. **Be Surgical**: Only change what's necessary
-2. **Strict Syntax**: Follow the TECHNICAL LEXICON above exactly
-3. **Coordinate**: If a change affects multiple files, make all related edits
-4. **Explain**: Always provide a clear reason for each edit
-
-The processors will handle the YAML formatting - you focus on the logic.
+1. **Whole-Workflow Edits**: Use `update_workflow_steps` to rewrite the entire step list for a workflow. It is more reliable than granular patching.
+2. **Create New Processes**: Use `create_workflow` to add entirely new workflows/subworkflows.
+3. **Logic as Logic**: Use the `instruction` action for complex summaries, data processing, or multi-step calculations.
+4. **Coordinate**: If a change affects constants or tone, update those files in the same turn.
+5. **Strict Syntax**: Follow the TECHNICAL LEXICON exactly. No `ask` or `choice`.
 """
 
     # Single flexible tool - LLM decides the edit structure
@@ -48,7 +47,7 @@ The processors will handle the YAML formatting - you focus on the logic.
                 "type": "function",
                 "function": {
                     "name": "apply_edit",
-                    "description": "Apply a change to workflow.yaml, constants.yaml, or tone.yaml. You decide the structure based on what needs to change.",
+                    "description": "Apply a change to workflow.yaml, constants.yaml, or tone.yaml.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -59,19 +58,15 @@ The processors will handle the YAML formatting - you focus on the logic.
                             },
                             "edit_type": {
                                 "type": "string",
-                                "enum": ["insert_step", "modify_step", "delete_step", "set_constant", "delete_constant", "add_prerequisite", "remove_prerequisite", "set_role", "set_tone", "add_guideline", "remove_guideline"],
-                                "description": "What kind of edit to make"
+                                "enum": ["create_workflow", "update_workflow_steps", "set_constant", "delete_constant", "add_prerequisite", "remove_prerequisite", "set_role", "set_tone", "add_guideline", "remove_guideline"],
+                                "description": "What kind of edit to make. Use update_workflow_steps to rewrite a workflow's steps."
                             },
                             "target": {
                                 "type": "object",
-                                "description": "Identifies what to edit (e.g., {workflow: 'BookFlight', step_id: 'ask_date'} or {key: 'default_timeout'})"
+                                "description": "Identifies what to edit. For workflows: {workflow: 'Name'}. For constants: {key: 'Name'}."
                             },
                             "content": {
-                                "description": "The new/updated content. Structure depends on edit_type. Can be a step object, a value, or a string."
-                            },
-                            "position": {
-                                "type": "object",
-                                "description": "For inserts: {type: 'before'|'after'|'at_index', reference: step_id or index}"
+                                "description": "The new content. For update_workflow_steps, this MUST be the FULL list of steps for that workflow. For create_workflow, {name: 'Name', description: 'When to use', steps: [...], is_subworkflow: bool}"
                             },
                             "reason": {
                                 "type": "string",
@@ -93,12 +88,11 @@ The processors will handle the YAML formatting - you focus on the logic.
         edit_type = args["edit_type"]
         target = args.get("target", {})
         content = args.get("content")
-        position = args.get("position")
         reason = args["reason"]
 
         try:
             if file == "workflow.yaml":
-                return self._handle_workflow_edit(edit_type, target, content, position, reason)
+                return self._handle_workflow_edit(edit_type, target, content, reason)
             elif file == "constants.yaml":
                 return self._handle_constants_edit(edit_type, target, content, reason)
             elif file == "tone.yaml":
@@ -109,62 +103,44 @@ The processors will handle the YAML formatting - you focus on the logic.
         return "Error: Invalid file specified"
 
     # Handle workflow edits with flexible structure
-    def _handle_workflow_edit(self, edit_type: str, target: dict, content: Any, position: dict, reason: str) -> str:
+    def _handle_workflow_edit(self, edit_type: str, target: dict, content: Any, reason: str) -> str:
         workflow = target.get("workflow")
-        step_id = target.get("step_id")
 
-        if edit_type == "insert_step":
-            if not workflow or not content or not position:
-                return "Error: insert_step requires workflow, content, and position"
+        if edit_type == "create_workflow":
+            if not isinstance(content, dict):
+                return "Error: create_workflow content must be a dict with name, description, and steps"
             
-            if self.workflow_processor.insert_step(workflow, position, content):
+            name = content.get("name")
+            desc = content.get("description")
+            steps = content.get("steps")
+            is_sub = content.get("is_subworkflow", False)
+            
+            if not name or not desc or not steps:
+                return "Error: create_workflow requires name, description, and steps"
+                
+            if self.workflow_processor.create_workflow(name, desc, steps, is_sub):
                 self.proposed_changes.append({
                     "file": "workflow.yaml",
-                    "type": "insert",
-                    "workflow": workflow,
-                    "after": content,
+                    "type": "create",
+                    "workflow": name,
                     "reason": reason
                 })
-                return f"Success: Inserted new step into '{workflow}'"
+                return f"Success: Created new workflow '{name}'"
+            return f"Error: Workflow '{name}' already exists"
 
-        elif edit_type == "modify_step":
-            if not workflow or not step_id or not content:
-                return "Error: modify_step requires workflow, step_id, and content"
+        elif edit_type == "update_workflow_steps":
+            if not workflow or not isinstance(content, list):
+                return "Error: update_workflow_steps requires workflow name in target and a list of steps in content"
             
-            old_step = self.workflow_processor.get_step_by_id(workflow, step_id)
-            if not old_step:
-                return f"Error: Step '{step_id}' not found in '{workflow}'"
-            
-            if self.workflow_processor.modify_step(workflow, step_id, content):
+            if self.workflow_processor.update_workflow_steps(workflow, content):
                 self.proposed_changes.append({
                     "file": "workflow.yaml",
-                    "type": "modify",
+                    "type": "update",
                     "workflow": workflow,
-                    "step_id": step_id,
-                    "before": old_step,
-                    "after": content,
                     "reason": reason
                 })
-                return f"Success: Modified step '{step_id}' in '{workflow}'"
-
-        elif edit_type == "delete_step":
-            if not workflow or not step_id:
-                return "Error: delete_step requires workflow and step_id"
-            
-            old_step = self.workflow_processor.get_step_by_id(workflow, step_id)
-            if not old_step:
-                return f"Error: Step '{step_id}' not found"
-            
-            if self.workflow_processor.delete_step(workflow, step_id):
-                self.proposed_changes.append({
-                    "file": "workflow.yaml",
-                    "type": "delete",
-                    "workflow": workflow,
-                    "step_id": step_id,
-                    "before": old_step,
-                    "reason": reason
-                })
-                return f"Success: Deleted step '{step_id}' from '{workflow}'"
+                return f"Success: Updated all steps for workflow '{workflow}'"
+            return f"Error: Workflow '{workflow}' not found"
 
         return f"Error: Unknown workflow edit_type '{edit_type}'"
 

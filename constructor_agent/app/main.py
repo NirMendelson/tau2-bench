@@ -23,14 +23,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from constructor_agent.app.agent.orchestrator import TrinityOrchestrator
+from constructor_agent.app.agent.unified_agent import UnifiedAgent
 
 # Paths
 CODEBASE_DIR = "/Users/nirmendelson/quack/tau2-bench/data/tau2/domains/airline/codebase"
 WORKFLOW_PATH = os.path.join(CODEBASE_DIR, "workflow.yaml")
 CONSTANTS_PATH = os.path.join(CODEBASE_DIR, "constants.yaml")
 TONE_PATH = os.path.join(CODEBASE_DIR, "tone.yaml")
-RULES_PATH = "/Users/nirmendelson/quack/tau2-bench/constructor_agent/knowledge/cspl-rules.md"
 
 # Initialize components
 workflow_processor = WorkflowProcessor(WORKFLOW_PATH)
@@ -38,12 +37,12 @@ constants_processor = ConstantsProcessor(CONSTANTS_PATH)
 tone_processor = ToneProcessor(TONE_PATH)
 validator = WorkflowValidator(WORKFLOW_PATH)
 
-orchestrator = TrinityOrchestrator(
+# Cursor-style unified agent (exploration + editing in one conversational flow)
+agent = UnifiedAgent(
     workflow_processor,
     constants_processor,
     tone_processor,
-    validator,
-    RULES_PATH
+    validator
 )
 
 # Session-based conversation memory (in-memory for single-user system)
@@ -102,9 +101,9 @@ async def chat(request: ChatRequest):
         
         session = sessions[session_id]
 
-        # 1. Check if this is an approval of pending edits
+        # Check if this is an approval of pending edits
         if session["pending_edits"] and await check_if_approval(request.message, session["messages"]):
-            # Auto-approve
+            # Apply the changes
             workflow_processor.save()
             constants_processor.save()
             tone_processor.save()
@@ -119,37 +118,44 @@ async def chat(request: ChatRequest):
                 "explanation": msg
             }
         
-        # 2. Otherwise process as a normal request
         # Add user message to history
         session["messages"].append({
             "role": "user",
             "content": request.message
         })
         
-        # Process with full conversation history
-        result = orchestrator.process_request(request.message, session["messages"])
+        # Process with unified agent (Cursor-style: explore + edit + explain in one turn)
+        result = agent.process_request(request.message, session["messages"])
         
-        # Add assistant response to history
-        if "clarification" in result:
-            session["messages"].append({
-                "role": "assistant",
-                "content": result["clarification"]
-            })
-        elif "explanation" in result:
-            session["messages"].append({
-                "role": "assistant",
-                "content": result["explanation"]
-            })
+        # Add agent's response to history
+        agent_message = result.get("message", "")
+        session["messages"].append({
+            "role": "assistant",
+            "content": agent_message
+        })
+        
+        # If agent made changes, store them as pending
+        if result.get("has_changes"):
             session["pending_edits"] = result.get("edits")
+            
+            # Return as explanation (with edits for approval)
+            return {
+                "session_id": session_id,
+                "explanation": agent_message,
+                "edits": result.get("edits")
+            }
         
+        # No changes - just conversational response (could be clarification or general chat)
         return {
             "session_id": session_id,
-            **result
+            "clarification": agent_message
         }
+        
     except Exception as e:
         print(f"ERROR in /chat: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 class ApproveRequest(BaseModel):
     session_id: Optional[str] = None

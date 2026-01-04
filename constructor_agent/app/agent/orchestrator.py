@@ -74,7 +74,11 @@ class TrinityOrchestrator:
             step = self.workflow_processor.get_step_by_id(args["workflow_name"], args["step_id"])
             return json.dumps(step) if step else "Error: Not found."
         elif name == "grep_search":
-            return json.dumps(self.workflow_processor.grep_codebase(args["query"], args.get("include")))
+            # Focus search on the current domain
+            tone = self.tone_processor.data if hasattr(self.tone_processor, 'data') else self.tone_processor.load()
+            role_desc = tone.get("identity", {}).get("role", "").lower()
+            domain = "airline" if "airline" in role_desc else "retail" if "retail" in role_desc else "airline"
+            return json.dumps(self.workflow_processor.grep_codebase(args["query"], domain=domain))
         elif name == "read_file":
             # Basic implementation for planning phase
             import os

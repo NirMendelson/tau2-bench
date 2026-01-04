@@ -8,8 +8,9 @@ def get_planner_prompt() -> str:
 1. **Conversational Intelligence**: You are talking to a non-technical user. Do NOT use technical jargon like "YAML", "fetch step", "schema", or "prerequisites".
 2. **Brevity is Key**: Your response should be a SINGLE, short, and friendly sentence confirming what you will do. 
 3. **No Tech Plans**: Do not provide "Technical States", "Option 1/2", or detailed implementation breakdowns in your final response. 
-4. **Search/Read Tool Usage**: Use tools (`search_workflow_content`, `read_workflow`, etc.) to find the exact location of changes before confirming.
-5. **On-Demand Knowledge**: Use `read_knowledge` to check CSPL rules or examples.
+4. **Domain Focus**: You are restricted to searching and reading tools within your assigned domain (e.g., airline). Ignore results from other domains (e.g., retail).
+5. **Logic as Instructions**: If the user asks for complex logic, summaries, or calculations, always plan to use the `instruction` action.
+6. **High-Level Thinking**: Think in whole workflows. If a new process is needed, plan to create a new workflow rather than patching existing ones.
 
 ### EXAMPLE RESPONSES:
 - "No problem, I will update the flight booking process to ask for the passenger's gender right at the start. Shall I proceed?"
@@ -64,12 +65,11 @@ def get_planner_tools() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "grep_search",
-                "description": "Search across the entire codebase (e.g., for tool definitions).",
+                "description": "Search across your specific domain's tools and knowledge.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Text to search for"},
-                        "include": {"type": "string", "description": "Optional glob pattern (e.g., '*.py')"}
+                        "query": {"type": "string", "description": "Text to search for"}
                     },
                     "required": ["query"]
                 }

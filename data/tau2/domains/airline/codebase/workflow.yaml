@@ -132,8 +132,8 @@
     action: use_tool
     tool_name: get_user_details
     input: ['{{ user_id }}']
-    comment: get saved passengers, and if the main user is not in the list, add it
-      to the list, based on the user name and dob
+    comment: get saved passengers, and if the main user is not in the list, add 
+      it to the list, based on the user name and dob
     set_variables:
     - possible_but_not_confirmed_passengers: result
 
@@ -149,7 +149,8 @@
   - id: ask_preferred_payment_method
     action: fetch_with_message
     field: preferred_payment_method
-    message: What is your preferred payment method? You can pay with either 1 certificate, 1 credit card, or up to 3 gift cards.
+    message: What is your preferred payment method? You can pay with either 1 
+      certificate, 1 credit card, or up to 3 gift cards.
     comment: valid options are 'certificate', 'credit_card', 'gift_card'
 
   - id: collect_payment_methods
@@ -197,10 +198,14 @@
     smart_tool: true
     tool_name: book_reservation
     input: ["{{ user_id }}", "{{ origin }}", "{{ destination }}", "{{ flight_type
-        }}", "{{ cabin }}", "{{ selected_flights }}", "{{ passengers_details }}", "{{ preferred_payment_method_details
-        }}", "{{ total_baggages }}", "{{ nonfree_baggages }}", "{{ travel_insurance
-        }}", "{{ total_price }}"]
-    comment: "In payment_methods, the 'amount' field must be the exact portion of the balance to be charged. The sum of all amounts must equal total_price. (Limit: max 1 certificate, 1 credit card, 3 gift cards). in addition, Each reservation can use at most one travel certificate, at most one credit card, and at most three gift cards."
+        }}", "{{ cabin }}", "{{ selected_flights }}", "{{ passengers_details }}",
+      "{{ preferred_payment_method_details }}", "{{ total_baggages }}", "{{ nonfree_baggages
+        }}", "{{ travel_insurance }}", "{{ total_price }}"]
+    comment: "In payment_methods, the 'amount' field must be the exact portion of
+      the balance to be charged. The sum of all amounts must equal total_price. (Limit:
+      max 1 certificate, 1 credit card, 3 gift cards). in addition, Each reservation
+      can use at most one travel certificate, at most one credit card, and at most
+      three gift cards."
     set_variables:
     - new_reservation_id: reservation_id
 
@@ -556,14 +561,14 @@
   
 ---
 - workflow: ModifyFlightReservation
-  when: "user wants to modify or change the flights in their reservation, it only relevant for flights, not for changing other details in the reservation"
+  when: "user wants to modify or change the flights in their reservation, it only
+    relevant for flights, not for changing other details in the reservation"
 
   examples:
   - "I want to change the flights in my reservation"
   - "Can I modify the flights in my reservation?"
   - "I need to update the flights in my reservation"
   - "How can I change the flights in my reservation?"
-  
   keywords:
   - modify flight reservation
   - change flight reservation
@@ -975,7 +980,8 @@
 - id: fetch_change_type
   action: fetch_with_message
   field: passenger_change_type
-  comment: passenger_change_type can be 'passenger details' or 'number of passengers'
+  comment: passenger_change_type can be 'passenger details' or 'number of 
+    passengers'
   message: |
     What would you like to change about the passengers?
     - Passenger details (names, date of birth)
@@ -1891,3 +1897,25 @@
   action: reply
   message: "Use the data in your memory to answer the user's question about the flight
     details."
+---
+- workflow: GetUserProfile
+  when: Retrieve and provide user profile information. Collects user ID, fetches
+    user details, and answers questions using the retrieved data.
+- id: get_user_id
+  action: fetch
+  fields:
+    field: user_id
+    message: Please provide your user ID
+- id: fetch_user_details
+  action: use_tool
+  fields:
+    tool_name: get_user_details
+    input: ['{{user_id}}']
+- id: answer_user_questions
+  action: instruction
+  fields:
+    instruction: Use the retrieved user profile data to answer any questions the
+      user asks. Provide accurate information from the user details that were 
+      fetched. Be helpful and reference specific information from their profile.
+    set_variables:
+    - user_profile_data
