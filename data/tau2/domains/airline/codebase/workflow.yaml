@@ -1901,6 +1901,27 @@
 - workflow: GetUserProfile
   when: Retrieve and display user profile information including personal 
     details, contact info, saved payment methods, and reservation history
+
+  examples:
+  - "I want to know my profile information"
+  - "Can you show me my reservation history?"
+  - "What is my membership level?"
+  - "Show me my saved payment methods"
+  - "I want to know my address"
+  - "What is my email?"
+  - "What is my date of birth?"
+  - "What is my phone number?"
+
+  keywords:
+  - profile information
+  - reservation history
+  - membership level
+  - saved payment methods
+  - address
+  - email
+  - date of birth
+  - phone number
+  
 - step_id: get_user_id
   action: fetch
   field: user_id
