@@ -967,8 +967,10 @@
   - change passenger count
   - add a passenger
   - remove a passenger
-
-  when: "user wants to change passenger details in their reservation"
+  - update name
+  - change name
+  - change dob
+  - update birth date
 - id: fetch_change_type
   action: fetch_with_message
   field: passenger_change_type

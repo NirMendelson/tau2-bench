@@ -72,3 +72,4 @@ def tool_exists(tool_name: str) -> bool:
     """Check if a tool exists."""
     return _signature_cache.tool_exists(tool_name)
 
+

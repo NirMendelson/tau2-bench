@@ -70,3 +70,4 @@ That's it! The linter will automatically run your new validator on all tool call
 - VSCode/Cursor extension for real-time validation
 - More validation rules (variable usage, field validation, etc.)
 
+

@@ -5,3 +5,4 @@ from linter.validators import ValidationError
 
 __all__ = ['lint_workflow_file', 'ValidationError']
 
+

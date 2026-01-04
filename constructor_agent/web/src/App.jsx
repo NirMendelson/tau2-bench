@@ -104,7 +104,7 @@ function App() {
       <div className="sidebar">
         <h2><Layers size={20} style={{ marginRight: '8px' }} /> Workflows</h2>
         <div className="workflow-list">
-          {workflows.map((wf, idx) => (
+          {Array.isArray(workflows) && workflows.map((wf, idx) => (
             <div key={idx} className="workflow-item">{wf}</div>
           ))}
         </div>
