@@ -169,6 +169,10 @@ Used when you need the LLM to perform complex logic, calculations, data processi
 - **Operators**: `=`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `not contains`.
 - **Natural Language**: Conditions can also be natural language strings which the LLM will evaluate (e.g., `"user is a premium member"`).
 
+### CRITICAL RULES
+- We support both set_variable and set_variables, same with field and fields.
+- If use_tool doesn't have set_variables, it will fetch everything to memory.
+- If use_tool to get information and there is set_variables, make sure you use the SAME names as the names the tool returns.
 ---
 
 ## 2. constants.yaml - Global Constants and Default Prerequisites

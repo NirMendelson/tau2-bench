@@ -87,17 +87,6 @@ after:
 
 ---
 
-
----
-
-
-
----
-
----
-
-## Instruction
-
 **Prompt:** "Calculate the total price by summing all item prices and multiplying by the number of items"
 
 **Understanding:** Complex calculation that requires multiple steps → use instruction action
@@ -113,71 +102,6 @@ after:
     3. Return the total price
   set_variables:
   - total_price
-```
-
----
-
-**Prompt:** "Count how many passengers are in the reservation"
-
-**Understanding:** Need to count items in a list → use instruction to get length
-
-**Change:**
-```yaml
-- id: count_passengers
-  action: instruction
-  instruction: |
-    Count the number of passengers from the passengers variable in memory.
-    The passengers variable is a list of Passenger objects that was set from get_reservation_details.
-    Set number_of_passengers to the length of this list.
-  set_variable: number_of_passengers
-```
-
----
-
-**Prompt:** "Extract flight numbers and dates from the reservation flights list"
-
-**Understanding:** Need to extract specific fields from complex data structures → use instruction
-
-**Change:**
-```yaml
-- id: extract_flight_info
-  action: instruction
-  instruction: |
-    Extract the flight numbers and dates from the reservation_flights.
-    The reservation_flights is a list of ReservationFlight objects, each containing:
-    - flight_number: The flight number (e.g., "HAT001")
-    - date: The flight date in YYYY-MM-DD format
-
-    Set the following variables:
-    - flight_numbers: A list of all flight numbers from the reservation
-    - flight_dates: A list of all flight dates from the reservation
-  set_variables:
-  - flight_numbers
-  - flight_dates
-```
-
----
-
-**Prompt:** "Check if the booking was made within the last 24 hours"
-
-**Understanding:** Complex time calculation → use instruction with detailed steps
-
-**Change:**
-```yaml
-- id: check_booking_within_24hr
-  action: instruction
-  instruction: |
-    Check if the reservation was created within the last 24 hours.
-
-    Steps:
-    1. Get the created_at timestamp (format: YYYY-MM-DDTHH:MM:SS)
-    2. Get today_date from memory (format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
-    3. Calculate the time difference between today_date and reservation_created_at
-    4. If the difference is less than 24 hours, set booking_within_24hr to true, else false
-
-    Note: You may need to parse the datetime strings and calculate hours difference.
-    Set booking_within_24hr variable to true or false.
-  set_variable: booking_within_24hr
 ```
 
 ---
@@ -213,6 +137,9 @@ after:
 
 **Understanding:** Need to call a tool and assign its result to a variable with a custom name → use use_tool with set_variables. The agent should check what tools are available and what fields they return to properly map the results.
 
+**CRITICAL:** When using tools if there is no set_variable/s it will get all data. if there is, make sure to use the same name as the one the tool returns.
+in this example, it will work only if the tool return data that is called flight_search_results
+
 **Change:**
 ```yaml
 - id: search_flights
@@ -220,7 +147,7 @@ after:
   tool_name: search_direct_flight
   input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
   set_variables:
-  - flight_search_results: result
+  - flight_search_results
 ```
 
 ---

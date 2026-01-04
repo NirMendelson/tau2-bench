@@ -1899,23 +1899,21 @@
     details."
 ---
 - workflow: GetUserProfile
-  when: Retrieve and provide user profile information. Collects user ID, fetches
-    user details, and answers questions using the retrieved data.
-- id: get_user_id
+  when: Retrieve and display user profile information including personal 
+    details, contact info, saved payment methods, and reservation history
+- step_id: get_user_id
   action: fetch
-  fields:
-    field: user_id
-    message: Please provide your user ID
-- id: fetch_user_details
+  field: user_id
+  message: Please provide your user ID
+- step_id: fetch_user_details
   action: use_tool
-  fields:
-    tool_name: get_user_details
-    input: ['{{user_id}}']
-- id: answer_user_questions
+  tool_name: get_user_details
+  input: ['{{user_id}}']
+- step_id: answer_user_questions
   action: instruction
-  fields:
-    instruction: Use the retrieved user profile data to answer any questions the
-      user asks. Provide accurate information from the user details that were 
-      fetched. Be helpful and reference specific information from their profile.
-    set_variables:
-    - user_profile_data
+  instruction: You have retrieved the user's profile information including their
+    name, address, email, date of birth, payment methods, saved passengers, 
+    membership level, and reservation IDs. Now answer any questions the user 
+    asks about their profile using this information. Provide clear and helpful 
+    answers about their account details, reservations, payment methods, or any 
+    other profile-related information they inquire about.

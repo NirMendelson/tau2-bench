@@ -108,14 +108,16 @@ async def chat(request: ChatRequest):
             constants_processor.save()
             tone_processor.save()
             
-            msg = "Changes applied successfully! ✅"
+            # Conversational confirmation (like Cursor)
+            msg = "Done! Changes applied. ✅"
             session["messages"].append({"role": "user", "content": request.message})
             session["messages"].append({"role": "assistant", "content": msg})
             session["pending_edits"] = None
             
+            # Return as clarification (just conversation, no special UI)
             return {
                 "session_id": session_id,
-                "explanation": msg
+                "clarification": msg
             }
         
         # Add user message to history
@@ -134,18 +136,17 @@ async def chat(request: ChatRequest):
             "content": agent_message
         })
         
-        # If agent made changes, store them as pending
+        # If agent made changes, store them as pending (but don't send edits to frontend)
         if result.get("has_changes"):
             session["pending_edits"] = result.get("edits")
             
-            # Return as explanation (with edits for approval)
+            # Return just the conversational message (no edits field = no special UI)
             return {
                 "session_id": session_id,
-                "explanation": agent_message,
-                "edits": result.get("edits")
+                "clarification": agent_message  # Just conversation, frontend won't show "Proposed Edits" box
             }
         
-        # No changes - just conversational response (could be clarification or general chat)
+        # No changes - just conversational response
         return {
             "session_id": session_id,
             "clarification": agent_message
