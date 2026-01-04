@@ -1,6 +1,8 @@
+import yaml
 import json
 import re
-import yaml
+import datetime
+from pydantic import BaseModel
 
 # Custom YAML loader that doesn't automatically parse strings as dates/times
 class NoDatesSafeLoader(yaml.SafeLoader):
@@ -91,3 +93,11 @@ def is_null_value(val):
         if normalized in ["null", "none", "n/a", "unknown", ""]:
             return True
     return False
+
+# Serializes objects (including Pydantic models and dates) into JSON-compatible formats
+def serialize_obj(obj):
+    if isinstance(obj, BaseModel): return obj.model_dump()
+    if isinstance(obj, (datetime.date, datetime.datetime)): return obj.isoformat()
+    if isinstance(obj, list): return [serialize_obj(i) for i in obj]
+    if isinstance(obj, dict): return {k: serialize_obj(v) for k, v in obj.items()}
+    return obj

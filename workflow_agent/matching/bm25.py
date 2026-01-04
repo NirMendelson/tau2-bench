@@ -1,56 +1,24 @@
 from rapidfuzz import fuzz
 
-
+# Calculates the fuzzy match score for a single keyword against the query
 def calculate_keyword_score(keyword, query):
-    """
-    Calculates the fuzzy match score for a single keyword against the query.
-    If keyword has multiple words, tries both the full phrase and individual words.
-    Returns the maximum score (0-1 range).
-    """
-    # Normalize to lowercase for comparison
-    keyword_lower = keyword.lower()
-    query_lower = query.lower()
+    k_lower, q_lower = keyword.lower(), query.lower()
+    scores = [fuzz.partial_ratio(k_lower, q_lower)]
     
-    scores = []
-    
-    # Score for the full keyword phrase
-    full_score = fuzz.partial_ratio(keyword_lower, query_lower)
-    scores.append(full_score)
-    
-    # If keyword has multiple words, also try each word separately
-    words = keyword_lower.split()
+    words = k_lower.split()
     if len(words) > 1:
-        for word in words:
-            word_score = fuzz.partial_ratio(word, query_lower)
-            scores.append(word_score)
+        for word in words: scores.append(fuzz.partial_ratio(word, q_lower))
     
-    # Return the maximum score normalized to 0-1
     return max(scores) / 100.0
 
-
+# Calculates fuzzy keyword scores for each workflow
 def calculate_bm25_scores(query, workflows):
-    """
-    Calculates BM25-style scores for each workflow based on the 'keywords' field.
-    Uses fuzzy matching instead of traditional BM25.
-    Returns a dictionary of workflow_name: score (0-1 range).
-    """
     scores = {}
-    
-    for workflow in workflows:
-        workflow_name = workflow.get('workflow')
-        keywords = workflow.get('keywords', [])
-        
+    for wf in workflows:
+        name = wf.get('workflow')
+        keywords = wf.get('keywords', [])
         if not keywords:
-            scores[workflow_name] = 0.0
+            scores[name] = 0.0
             continue
-        
-        # Calculate score for each keyword and take the maximum
-        keyword_scores = []
-        for keyword in keywords:
-            score = calculate_keyword_score(keyword, query)
-            keyword_scores.append(score)
-        
-        # The workflow score is the maximum score across all keywords
-        scores[workflow_name] = max(keyword_scores) if keyword_scores else 0.0
-    
+        scores[name] = max(calculate_keyword_score(k, query) for k in keywords)
     return scores
