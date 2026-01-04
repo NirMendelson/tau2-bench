@@ -556,7 +556,14 @@
   
 ---
 - workflow: ModifyFlightReservation
-  when: "user wants to modify or change their flight reservation"
+  when: "user wants to modify or change the flights in their reservation, it only relevant for flights, not for changing other details in the reservation"
+
+  examples:
+  - "I want to change the flights in my reservation"
+  - "Can I modify the flights in my reservation?"
+  - "I need to update the flights in my reservation"
+  - "How can I change the flights in my reservation?"
+  
   keywords:
   - modify flight reservation
   - change flight reservation
@@ -565,27 +572,37 @@
   - flight modification
   - flight change
 
-- id: fetch_user_and_reservation
+- id: fetch_user_id
   action: fetch
-  fields: [user_id, reservation_id
+  field: user_id
+
+- id: fetch_reservation_id
+  action: fetch_with_condition
+  field: reservation_id
+  condition: "assistant already asked explicitly for {reservation_id} but user didn't
+    provide it"
+  then:
+  - id: find_reservation_subworkflow
+    action: use_subworkflow
+    subworkflow: FindReservationId
 
     # Step 2: Get reservation details to get current cabin and flight info
-]
+
 - id: get_reservation_details
   action: use_tool
   tool_name: get_reservation_details
   input: ["{{ reservation_id }}"]
   set_variables:
-  - current_cabin
-  - current_flights
-  - current_price
-  - current_flight_type
-  - current_origin
-  - current_destination
-  - current_date
-  - current_number_of_passengers
-  - current_total_baggages
-  - current_nonfree_baggages
+  - current_cabin: cabin
+  - current_flights: flights
+  - current_price: price
+  - current_flight_type: flight_type
+  - current_origin: origin
+  - current_destination: destination
+  - current_date: date
+  - current_number_of_passengers: number_of_passengers
+  - current_total_baggages: total_baggages
+  - current_nonfree_baggages: nonfree_baggages
 
     # Step 3: Check if basic economy (cannot be modified)
 - id: check_basic_economy
@@ -937,6 +954,88 @@
       message: "The passenger details change has been cancelled. Your reservation
         remains unchanged."
 
+---
+- workflow: ModifyPassengersDetails
+  when: "user wants to change passenger details or passenger count in their reservation"
+  examples:
+  - "I want to change the passenger details"
+  - "Can I change the number of passengers?"
+  - "I need to update my passenger details"
+  - "How many passengers are in my reservation?"
+  keywords:
+  - change passenger details
+  - change passenger count
+  - add a passenger
+  - remove a passenger
+
+  when: "user wants to change passenger details in their reservation"
+- id: fetch_change_type
+  action: fetch_with_message
+  field: passenger_change_type
+  comment: passenger_change_type can be 'passenger details' or 'number of passengers'
+  message: |
+    What would you like to change about the passengers?
+    - Passenger details (names, date of birth)
+    - Number of passengers
+
+    Please specify which one.
+
+  # Step 2: Check if they want to change number of passengers (not allowed)
+- id: check_number_of_passengers_change
+  action: conditional
+  condition:
+    operator: eq
+    left: "{{ passenger_change_type }}"
+    right: "number of passengers"
+  then:
+  - id: inform_number_change_not_allowed
+    action: reply
+    message: "I'm sorry, but the number of passengers cannot be modified after booking.
+      You can only update passenger details (names and date of birth) for the existing
+      {{ current_number_of_passengers }} passenger(s)."
+  else:
+        # Step 3: Collect updated passenger details
+  - id: collect_updated_passengers_details
+    action: fetch_with_condition
+    fields: updated_passengers_details (first_name, last_name, date_of_birth)
+    condition:
+      operator: eq
+      left: "{{ updated_passengers_details }}"
+      right: "complete information for all {{ current_number_of_passengers }} travelers,
+        each with first_name, last_name, and date_of_birth"
+
+        # Step 4: Ask for confirmation
+  - id: confirm_passenger_details_change
+    action: fetch_with_message
+    field: change_confirmed
+    message: |
+      You are updating the passenger details for {{ current_number_of_passengers }} passenger(s) in your reservation.
+
+      Updated passenger details:
+      {{ updated_passengers_details }}
+
+      Please confirm this change by typing 'yes' or 'no'.
+
+        # Step 5: Check confirmation and update
+  - id: check_change_confirmed
+    action: conditional
+    condition:
+      operator: eq
+      left: "{{ change_confirmed }}"
+      right: "yes"
+    then:
+    - id: update_reservation_passengers
+      action: use_tool
+      tool_name: update_reservation_passengers
+      input: ["{{ reservation_id }}", "{{ updated_passengers_details }}"]
+    - id: confirm_passengers_updated
+      action: reply
+      message: "The passenger details have been successfully updated for your reservation."
+    else:
+    - id: inform_change_cancelled
+      action: reply
+      message: "The passenger details change has been cancelled. Your reservation
+        remains unchanged."
 ---
 - subworkflow: FindReservationId
   return: reservation_id
