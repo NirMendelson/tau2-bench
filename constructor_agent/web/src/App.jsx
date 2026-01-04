@@ -12,6 +12,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [workflows, setWorkflows] = useState([]);
   const [pendingEdits, setPendingEdits] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -48,9 +49,17 @@ function App() {
       const res = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input })
+        body: JSON.stringify({
+          message: input,
+          session_id: sessionId  // Include session for conversation memory
+        })
       });
       const data = await res.json();
+
+      // Store session_id for future requests
+      if (data.session_id && !sessionId) {
+        setSessionId(data.session_id);
+      }
 
       if (data.clarification) {
         setMessages(prev => [...prev, { role: 'assistant', content: data.clarification }]);

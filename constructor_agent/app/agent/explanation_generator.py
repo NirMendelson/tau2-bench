@@ -5,64 +5,28 @@ class ExplanationGenerator:
     # Main entry point to summarize all proposed changes in plain English
     def generate_explanation(self, change_set: List[Dict[str, Any]]) -> str:
         if not change_set:
-            return "I've analyzed the request but no changes were necessary."
+            return "I've analyzed the request, and no changes are needed right now."
 
-        sections = []
+        # Collect unique descriptions of what was done
+        summaries = []
         
-        # Group by file type
-        workflows = [c for c in change_set if c["file"] == "workflow.yaml"]
-        constants = [c for c in change_set if c["file"] == "constants.yaml"]
-        tone = [c for c in change_set if c["file"] == "tone.yaml"]
+        # Filter changes to unique high-level actions
+        workflow_count = len([c for c in change_set if c["file"] == "workflow.yaml"])
+        constant_count = len([c for c in change_set if c["file"] == "constants.yaml"])
+        tone_count = len([c for c in change_set if c["file"] == "tone.yaml"])
 
-        if workflows:
-            sections.append(self._explain_workflow_changes(workflows))
-        if constants:
-            sections.append(self._explain_constants_changes(constants))
-        if tone:
-            sections.append(self._explain_tone_changes(tone))
+        # Try to find a human-readable reason from the change set
+        reasons = [c.get("reason") for c in change_set if c.get("reason")]
+        main_reason = reasons[0] if reasons else "updated the logic to match your request"
 
-        header = "I've planned the following changes to achieve your goal:\n\n"
-        footer = "\n\nWould you like me to apply these changes?"
-        return header + "\n\n".join(sections) + footer
+        if workflow_count > 0:
+            summaries.append(f"I've updated the workflow logic ({main_reason}).")
+        if constant_count > 0:
+            summaries.append("I've also updated some global settings.")
+        if tone_count > 0:
+            summaries.append("I've adjusted my personality and tone as requested.")
 
-    # Explain modifications to workflows and steps
-    def _explain_workflow_changes(self, changes: List[Dict[str, Any]]) -> str:
-        lines = ["**Workflows**"]
-        for c in changes:
-            wf_name = c.get("workflow", "Unknown")
-            action = c.get("type")
-            step_id = c.get("step_id", "new step")
-            reason = c.get("reason", "")
-            
-            if action == "insert":
-                lines.append(f"- Add a new step '{step_id}' to the '{wf_name}' workflow. {reason}")
-            elif action == "modify":
-                lines.append(f"- Update the calculation or logic in the '{step_id}' step of the '{wf_name}' workflow. {reason}")
-            elif action == "delete":
-                lines.append(f"- Remove the '{step_id}' step from the '{wf_name}' workflow as it is no longer needed.")
-        return "\n".join(lines)
+        summary_text = " ".join(summaries)
+        return f"Sure! {summary_text} Would you like to approve these changes?"
 
-    # Explain updates to global configuration settings
-    def _explain_constants_changes(self, changes: List[Dict[str, Any]]) -> str:
-        lines = ["**Configuration & Prerequisites**"]
-        for c in changes:
-            key = c.get("key")
-            ctype = c.get("type")
-            if "prerequisite" in ctype:
-                lines.append(f"- Ensure the agent always asks for '{key}' before starting a conversation.")
-            else:
-                lines.append(f"- Update global setting for '{key}'.")
-        return "\n".join(lines)
-
-    # Explain updates to agent personality and guidelines
-    def _explain_tone_changes(self, changes: List[Dict[str, Any]]) -> str:
-        lines = ["**Tone & Personality**"]
-        for c in changes:
-            ctype = c.get("type")
-            if ctype == "set_role":
-                lines.append(f"- Update the agent's professional identity/role.")
-            elif ctype == "set_tone":
-                lines.append(f"- Adjust how the agent speaks to be more aligned with your instructions.")
-            elif ctype == "add_guideline":
-                lines.append(f"- Add a new behavioral rule to ensure consistent service.")
-        return "\n".join(lines)
+    # Helper methods are now simplified or removed as the top-level method is concise enough

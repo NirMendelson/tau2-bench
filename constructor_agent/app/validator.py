@@ -4,6 +4,22 @@ import tempfile
 import os
 from constructor_agent.app.processor.workflow_processor import WorkflowProcessor
 
+SUPPORTED_ACTIONS = {
+    "fetch": ["field", "fields"],
+    "fetch_with_condition": ["field", "condition"],
+    "fetch_with_message": ["field", "message"],
+    "reply": ["message"],
+    "reply_exact_message": ["message"],
+    "set_variable": ["variable", "value"],
+    "conditional": ["condition", "then"],
+    "condition": ["condition", "then"],
+    "conditional_with_message": ["condition"],
+    "use_tool": ["tool_name", "input"],
+    "instruction": ["instruction"],
+    "loop": ["loop_over", "loop_variable"],
+    "use_subworkflow": ["subworkflow"]
+}
+
 # Enhanced validator to support the Trinity Loop's auto-retry and multi-file checks
 class WorkflowValidator:
     def __init__(self, workflow_path: str):
@@ -12,9 +28,6 @@ class WorkflowValidator:
     # Main entry point for validating a full set of proposed changes
     def validate_change_set(self, change_set: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
         errors = []
-        
-        # In a real implementation, we would validate each file's in-memory state.
-        # For Phase 2, we focus on identifying obvious CSPL rule violations.
         
         for edit in change_set:
             if edit["file"] == "workflow.yaml":
@@ -30,7 +43,7 @@ class WorkflowValidator:
     # Check for CSPL rule violations in workflow edits
     def _validate_workflow_edit(self, edit: Dict[str, Any]) -> List[str]:
         errors = []
-        step = edit.get("after")
+        step = edit.get("after") or edit.get("content")
         if not step: return []
         
         if not isinstance(step, dict):
@@ -38,14 +51,26 @@ class WorkflowValidator:
             
         if "id" not in step:
             errors.append("Step missing 'id' field")
-        if "action" not in step:
-            errors.append("Step missing 'action' field")
-            
+        
         action = step.get("action")
-        if action == "fetch" and "field" not in step and "fields" not in step:
-            errors.append("fetch action requires 'field' or 'fields'")
-        elif action == "conditional" and ("condition" not in step or "then" not in step):
-            errors.append("conditional requires 'condition' and 'then'")
+        if not action:
+            errors.append("Step missing 'action' field")
+            return errors
+
+        if action not in SUPPORTED_ACTIONS:
+            errors.append(f"Invalid action '{action}'. Supported actions are: {', '.join(SUPPORTED_ACTIONS.keys())}")
+            return errors
+
+        # Check required fields for the specific action
+        required_fields = SUPPORTED_ACTIONS[action]
+        # For fetch, we need either 'field' or 'fields'
+        if action == "fetch":
+            if "field" not in step and "fields" not in step:
+                errors.append(f"Action 'fetch' requires either 'field' or 'fields'")
+        else:
+            for field in required_fields:
+                if field not in step:
+                    errors.append(f"Action '{action}' is missing required field: '{field}'")
         
         return errors
 

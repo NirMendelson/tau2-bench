@@ -1,6 +1,10 @@
 import litellm
 import json
 from typing import List, Dict, Any, Tuple
+
+# Fix for Anthropic models requiring tools schema if history contains tool results
+litellm.modify_params = True
+
 from constructor_agent.app.agent.planner_prompt import get_planner_prompt, get_planner_tools
 from constructor_agent.app.agent.executor_logic import ExecutorLogic
 from constructor_agent.app.agent.knowledge_retrieval import read_knowledge
@@ -16,28 +20,26 @@ class TrinityOrchestrator:
         self.model = model
         self.explanation_generator = ExplanationGenerator()
 
-    # Main entry point for the user request
-    def process_request(self, user_message: str) -> Dict[str, Any]:
+    # Main entry point for the user request with conversation history
+    def process_request(self, user_message: str, conversation_history: List[Dict[str, Any]] = []) -> Dict[str, Any]:
         self.workflow_processor.load()
         self.constants_processor.load()
         self.tone_processor.load()
 
-        # Phase 1: Planner
-        plan_result = self._run_planner(user_message)
+        # Phase 1: Planner (with conversation context)
+        plan_result = self._run_planner(user_message, conversation_history)
         if "clarification" in plan_result:
             return plan_result
         
-        plan = plan_result["plan"]
-        
         # Phase 2 & 3: Executor & Validator (with auto-retry)
-        return self._run_execution_loop(plan)
+        return self._run_execution_loop(plan_result["plan"], plan_result.get("history", []))
 
     # Discovery phase: Ask the LLM to understand intent and search the codebase
-    def _run_planner(self, user_message: str) -> Dict[str, Any]:
-        messages = [
-            {"role": "system", "content": get_planner_prompt()},
-            {"role": "user", "content": user_message}
-        ]
+    def _run_planner(self, user_message: str, conversation_history: List[Dict[str, Any]] = []) -> Dict[str, Any]:
+        # Start with conversation history for context, then add system prompt
+        messages = conversation_history[:-1] if conversation_history else []  # Exclude the current user message
+        messages.insert(0, {"role": "system", "content": get_planner_prompt()})
+        messages.append({"role": "user", "content": user_message})
         
         for _ in range(10):  # Allow up to 10 tool turns for exploration
             response = litellm.completion(model=self.model, messages=messages, tools=get_planner_tools())
@@ -49,13 +51,13 @@ class TrinityOrchestrator:
                 # Simple detection for clarification questions vs finalized plans
                 if "?" in content and any(word in content.lower() for word in ["should", "would", "which", "how", "please"]):
                     return {"clarification": content}
-                return {"plan": content}
+                return {"plan": content, "history": messages}
             
             for tc in msg.tool_calls:
                 res = self._execute_planner_tool(tc.function.name, json.loads(tc.function.arguments))
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": res})
         
-        return {"plan": messages[-1].content}
+        return {"plan": messages[-1].content, "history": messages}
 
     # Execute exploration tools for the Planner
     def _execute_planner_tool(self, name: str, args: dict) -> str:
@@ -84,10 +86,17 @@ class TrinityOrchestrator:
         return f"Error: Tool '{name}' not found."
 
     # Engineering & Verification phase: Translate plan to edits and validate (retry if needed)
-    def _run_execution_loop(self, plan: str, retries: int = 3) -> Dict[str, Any]:
+    def _run_execution_loop(self, plan: str, history: List[Dict[str, Any]] = [], retries: int = 3) -> Dict[str, Any]:
         executor = ExecutorLogic(self.workflow_processor, self.constants_processor, self.tone_processor)
+        
+        # We include the technical history discovered by the Planner (searches, reads)
+        # but focus the Executor on the final natural language plan.
+        # Convert Message objects to dicts for JSON serialization
+        history_dicts = [m if isinstance(m, dict) else dict(m) for m in history]
+        
         messages = [
-            {"role": "system", "content": executor.get_executor_prompt(plan)}
+            {"role": "system", "content": executor.get_executor_prompt(plan)},
+            {"role": "user", "content": "REFERENCE CONTEXT (Technical Discovery History from Planner):\n" + json.dumps(history_dicts)}
         ]
         
         for attempt in range(retries):
