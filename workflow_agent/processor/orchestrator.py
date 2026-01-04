@@ -2,6 +2,7 @@ from . import step_executor
 from ..matching import matcher
 import os
 from loguru import logger
+from ..utils.workflow_utils import get_subworkflow_definition, handle_fallback
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
@@ -149,7 +150,7 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
             
         elif result.status == "failed":
             # Fallback
-            fb_result = step_executor.handle_fallback(memory, tools)
+            fb_result = handle_fallback(memory, tools)
             messages_to_return.append(fb_result.message)
             memory.add_to_history("assistant", fb_result.message)
             # Clear stack to stop?
@@ -205,15 +206,7 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
             elif current_step.get('action') == 'use_subworkflow':
                 sub_name = current_step.get('subworkflow')
                 # Find subworkflow by searching first object of each list
-                sub_wf_list = None
-                for w in workflows:
-                    if isinstance(w, list) and len(w) > 0 and w[0].get('subworkflow') == sub_name:
-                        sub_wf_list = w
-                        break
-                    elif isinstance(w, dict) and w.get('subworkflow') == sub_name:
-                        # Fallback for old format
-                        sub_wf_list = w
-                        break
+                sub_wf_list = get_subworkflow_definition(sub_name, workflows)
                 
                 if sub_wf_list:
                     metadata = sub_wf_list[0] if isinstance(sub_wf_list, list) else sub_wf_list
