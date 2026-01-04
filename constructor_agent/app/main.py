@@ -9,6 +9,8 @@ from constructor_agent.app.validator import WorkflowValidator
 import os
 import sys
 import traceback
+import uuid
+import litellm
 
 app = FastAPI(title="Constructor Agent API")
 
@@ -22,8 +24,6 @@ app.add_middleware(
 )
 
 from constructor_agent.app.agent.orchestrator import TrinityOrchestrator
-from constructor_agent.app.validator import WorkflowValidator
-import uuid
 
 # Paths
 CODEBASE_DIR = "/Users/nirmendelson/quack/tau2-bench/data/tau2/domains/airline/codebase"
@@ -59,6 +59,35 @@ class ChatResponse(BaseModel):
     explanation: Optional[str] = None
     edits: Optional[List[Dict[str, Any]]] = None
 
+async def check_if_approval(user_message: str, conversation_history: List[Dict[str, Any]]) -> bool:
+    if not conversation_history:
+        return False
+    
+    # Get the last assistant message
+    last_assistant_msg = next((m["content"] for m in reversed(conversation_history) if m["role"] == "assistant"), "")
+    if not last_assistant_msg:
+        return False
+
+    prompt = f"""
+    The user is interacting with a coding agent.
+    The agent proposed some changes: "{last_assistant_msg}"
+    The user replied: "{user_message}"
+    
+    Does the user's reply mean "yes", "approve", "go ahead", "looks good", "do it", or any other conversational confirmation of the proposal?
+    Reply with ONLY 'YES' or 'NO'.
+    """
+    try:
+        response = litellm.completion(
+            model="gpt-4o-mini", # Using a fast model for intent detection
+            messages=[{"role": "user", "content": prompt}]
+        )
+        content = response.choices[0].message.content.strip().upper()
+        return "YES" in content
+    except Exception:
+        # Fallback to simple keyword check if LLM fails
+        keywords = ["yes", "approve", "go ahead", "do it", "sure", "ok", "yep", "looks good"]
+        return any(k in user_message.lower() for k in keywords)
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
@@ -72,7 +101,25 @@ async def chat(request: ChatRequest):
             }
         
         session = sessions[session_id]
+
+        # 1. Check if this is an approval of pending edits
+        if session["pending_edits"] and await check_if_approval(request.message, session["messages"]):
+            # Auto-approve
+            workflow_processor.save()
+            constants_processor.save()
+            tone_processor.save()
+            
+            msg = "Changes applied successfully! ✅"
+            session["messages"].append({"role": "user", "content": request.message})
+            session["messages"].append({"role": "assistant", "content": msg})
+            session["pending_edits"] = None
+            
+            return {
+                "session_id": session_id,
+                "explanation": msg
+            }
         
+        # 2. Otherwise process as a normal request
         # Add user message to history
         session["messages"].append({
             "role": "user",
@@ -104,8 +151,12 @@ async def chat(request: ChatRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+class ApproveRequest(BaseModel):
+    session_id: Optional[str] = None
+    edits: Optional[List[Dict[str, Any]]] = None
+
 @app.post("/approve")
-async def approve(session_id: str = None):
+async def approve(request: ApproveRequest = None):
     try:
         # Saving all three files in memory back to disk
         workflow_processor.save()
@@ -113,9 +164,9 @@ async def approve(session_id: str = None):
         tone_processor.save()
         
         # Clear pending edits for this session
-        if session_id and session_id in sessions:
-            sessions[session_id]["pending_edits"] = None
-            sessions[session_id]["messages"].append({
+        if request and request.session_id and request.session_id in sessions:
+            sessions[request.session_id]["pending_edits"] = None
+            sessions[request.session_id]["messages"].append({
                 "role": "assistant",
                 "content": "Changes applied successfully!"
             })

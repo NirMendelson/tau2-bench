@@ -2,7 +2,8 @@
   display: grid;
   grid-template-columns: 300px 1fr;
   gap: 2rem;
-  height: calc(100vh - 4rem);
+  height: 100%;
+  min-height: 0;
 }
 
 .sidebar {
@@ -69,6 +70,14 @@
   border-bottom-left-radius: 0.2rem;
 }
 
+.message.error {
+  align-self: flex-start;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  border-bottom-left-radius: 0.2rem;
+}
+
 .chat-input-area {
   padding: 1.5rem 2rem;
   background: rgba(0, 0, 0, 0.2);
@@ -93,6 +102,15 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
+.chat-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
 .send-btn {
   background: #3b82f6;
   color: white;
@@ -102,6 +120,14 @@
   cursor: pointer;
   transition: all 0.2s;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .send-btn:hover {
@@ -130,8 +156,19 @@
   transition: all 0.2s;
 }
 
-.approve-btn:hover {
+.approve-btn:hover:not(:disabled) {
   background: #059669;
+}
+
+.approve-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.approve-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .sidebar h2 {
@@ -152,6 +189,22 @@
 .workflow-item:hover {
   background: rgba(255, 255, 255, 0.03);
   color: white;
+}
+
+.workflow-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.workflow-list:empty::after {
+  content: "No workflows yet";
+  display: block;
+  padding: 1rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.85rem;
+  font-style: italic;
 }
 
 .loading-dots {

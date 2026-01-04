@@ -81,12 +81,16 @@ function App() {
   };
 
   const handleApprove = async (edits) => {
+    if (!edits) return;
     try {
       setLoading(true);
       const res = await fetch(`${API_BASE}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ edits })
+        body: JSON.stringify({ 
+          edits,
+          session_id: sessionId 
+        })
       });
       const data = await res.json();
 
@@ -97,11 +101,16 @@ function App() {
       } else {
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `Validation failed: ${data.errors.join(', ')}. I might need to try again or you can clarify.`,
+          content: `Validation failed: ${data.errors?.join(', ') || data.detail || 'Unknown error'}. I might need to try again or you can clarify.`,
           isError: true
         }]);
       }
     } catch (err) {
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `Error applying changes: ${err.message}. Please try again.`,
+        isError: true
+      }]);
       console.error(err);
     } finally {
       setLoading(false);
@@ -127,16 +136,28 @@ function App() {
                 {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
                 <span>{msg.role === 'user' ? 'You' : 'Constructor Agent'}</span>
               </div>
-              <div>{msg.content}</div>
+              <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</div>
               {msg.edits && (
                 <div className="proposed-changes">
                   <div style={{ fontSize: '0.85rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>Proposed Edits:</div>
                   <ul style={{ fontSize: '0.8rem', paddingLeft: '1.2rem', margin: '0.5rem 0' }}>
-                    {msg.edits.map((e, i) => <li key={i}>{e.name}</li>)}
+                    {msg.edits.map((e, i) => (
+                      <li key={i}>
+                        <strong>{e.type}</strong> in {e.file}: {e.reason}
+                      </li>
+                    ))}
                   </ul>
-                  <button className="approve-btn" onClick={() => handleApprove(msg.edits)}>
-                    Approve and Apply
+                  <button 
+                    className="approve-btn"
+                    onClick={() => handleApprove(msg.edits)}
+                    disabled={loading}
+                  >
+                    <Check size={16} style={{ marginRight: '0.5rem', verticalAlign: 'middle' }} />
+                    Approve Changes
                   </button>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.8, fontStyle: 'italic', marginTop: '0.5rem', textAlign: 'center' }}>
+                    Or type "approve" or "yes" to apply these changes.
+                  </div>
                 </div>
               )}
             </div>
@@ -159,9 +180,10 @@ function App() {
             placeholder="Type your instruction (e.g., 'If age > 18, use adult_registration tool')"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            onKeyPress={(e) => e.key === 'Enter' && !loading && handleSend()}
+            disabled={loading}
           />
-          <button className="send-btn" onClick={handleSend}>
+          <button className="send-btn" onClick={handleSend} disabled={loading || !input.trim()}>
             <Send size={18} />
           </button>
         </div>
