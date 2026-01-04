@@ -39,10 +39,15 @@ def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_
         
         if parsed and 'workflows' in parsed:
             best_wf, best_score = None, -1.0
+            scores = {}
             for wf in parsed['workflows']:
-                if float(wf.get('score', 0)) > best_score:
-                    best_score = float(wf['score'])
-                    best_wf = wf['name']
+                wf_name = wf.get('name', '')
+                score = float(wf.get('score', 0))
+                scores[wf_name] = score
+                if score > best_score:
+                    best_score = score
+                    best_wf = wf_name
+            
             if best_wf: return best_wf
     except Exception:
         pass
@@ -59,6 +64,10 @@ def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0, c
     bm25_scores = bm25.calculate_bm25_scores(last_message, workflows)
     semantic_scores = semantic.calculate_semantic_scores(last_message, workflows)
     combined = combine_scores(bm25_scores, semantic_scores)
+    
+    # Log all workflow scores in one line
+    scores_str = ", ".join([f"{wf_name}: {score:.3f}" for wf_name, score in sorted(combined.items(), key=lambda x: x[1], reverse=True)])
+    logger.info(f"workflow scores: [{scores_str}]")
     
     passed = filter_workflows(combined, min_score)
     candidates = []
@@ -84,5 +93,7 @@ def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0, c
         if not res: # Fallback to fuzzy match
             for c in candidates:
                 if c['workflow'] in str(sel_name) or str(sel_name) in c['workflow']: return c
+        if res:
+            logger.info(f"chosen workflow: {res['workflow']}")
         return res
     return None

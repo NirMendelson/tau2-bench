@@ -624,7 +624,7 @@
       - Baggage
       - Passengers details
 
-          # Step 4: Handle different change types using nested conditionals
+     # Step 4: Handle different change types using nested conditionals
   - id: handle_requested_change
     action: conditional
     condition: "{requested_change_type} = cabin"
@@ -673,7 +673,8 @@
   # Step 2: Check flight type and search for available flights on new dates
 - id: check_flight_type_and_search
   action: conditional
-  condition: "{current_flight_type} = direct"
+  condition: "current flight is a direct flight"
+  comment: "see if the flight is a direct flight or has a stop over"
   then:
         # Search direct flights for new dates
   - id: search_direct_flights_new_dates
