@@ -32,6 +32,7 @@ def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_
     response = litellm.completion(model=llm_model, messages=[{"role": "user", "content": prompt}])
     text = response.choices[0].message.content.strip()
 
+    llm_scores = {}
     try:
         match = re.search(r'```yaml\s*\n(.*?)\n```', text, re.DOTALL)
         content = match.group(1) if match else text
@@ -39,22 +40,21 @@ def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_
         
         if parsed and 'workflows' in parsed:
             best_wf, best_score = None, -1.0
-            scores = {}
             for wf in parsed['workflows']:
                 wf_name = wf.get('name', '')
                 score = float(wf.get('score', 0))
-                scores[wf_name] = score
+                llm_scores[wf_name] = score
                 if score > best_score:
                     best_score = score
                     best_wf = wf_name
             
-            if best_wf: return best_wf
+            if best_wf: return best_wf, llm_scores
     except Exception:
         pass
 
     for wf in candidate_workflows:
-        if wf['workflow'] in text: return wf['workflow']
-    return candidate_workflows[0]['workflow'] if candidate_workflows else None
+        if wf['workflow'] in text: return wf['workflow'], llm_scores
+    return (candidate_workflows[0]['workflow'] if candidate_workflows else None), llm_scores
 
 # Orchestrates full matching: BM25, Semantic search, filtering, and LLM resolution
 def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0, current_workflow_name=None):
@@ -67,7 +67,7 @@ def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0, c
     
     # Log all workflow scores in one line
     scores_str = ", ".join([f"{wf_name}: {score:.3f}" for wf_name, score in sorted(combined.items(), key=lambda x: x[1], reverse=True)])
-    logger.info(f"workflow scores: [{scores_str}]")
+    logger.info(f"semantic+bm25 scores: [{scores_str}]")
     
     passed = filter_workflows(combined, min_score)
     candidates = []
@@ -88,7 +88,13 @@ def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0, c
         candidates.append(generic)
 
     if candidates:
-        sel_name = resolve_workflow_conflict(conversation, candidates, tone_text, llm_model, current_workflow_name)
+        sel_name, llm_scores = resolve_workflow_conflict(conversation, candidates, tone_text, llm_model, current_workflow_name)
+        
+        # Log LLM scores in the same format
+        if llm_scores:
+            llm_scores_str = ", ".join([f"{wf_name}: {score:.3f}" for wf_name, score in sorted(llm_scores.items(), key=lambda x: x[1], reverse=True)])
+            logger.info(f"llm scores: [{llm_scores_str}]")
+        
         res = next((w for w in workflows if w['workflow'] == sel_name), None)
         if not res: # Fallback to fuzzy match
             for c in candidates:

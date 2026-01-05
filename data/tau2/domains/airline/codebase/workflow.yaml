@@ -569,12 +569,13 @@
 - id: fetch_user_id
   action: fetch
   field: user_id
+  comment: "the only correct term is user id."
 
 - id: fetch_reservation_id
   action: fetch_with_condition
   field: reservation_id
   condition: "assistant already asked explicitly for {reservation_id} but user didn't
-    provide it"
+    provide it. reservation id is completly different from user id."
   then:
   - id: find_reservation_subworkflow
     action: use_subworkflow
