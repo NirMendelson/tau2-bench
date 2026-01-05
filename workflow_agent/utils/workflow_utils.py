@@ -46,11 +46,24 @@ def get_branch_steps(step, condition_met):
 # Restores memory to a snapshot while preserving specified return variables
 def restore_memory_with_returns(memory, frame):
     snapshot = frame.get("snapshot")
-    return_vars = frame.get("return_vars")
-    if not snapshot or not return_vars: return
+    raw_return_vars = frame.get("return_vars")
+    if not snapshot or not raw_return_vars: return
     
-    if isinstance(return_vars, str): return_vars = [return_vars]
+    # Handle list of strings, list of dicts [{var: key}], or single string
+    return_vars = []
+    if isinstance(raw_return_vars, list):
+        for item in raw_return_vars:
+            if isinstance(item, dict): return_vars.append(list(item.keys())[0])
+            else: return_vars.append(item)
+    else:
+        return_vars = [raw_return_vars]
+        
     results = {v: memory.get_variable(v) for v in return_vars if memory.get_variable(v) is not None}
+    
+    import os
+    if os.getenv("DEBUG_MODE", "false").lower() == "true":
+        print(f"Restored memory from {frame.get('name')}, kept: {list(results.keys())}")
+        
     memory.variables = snapshot
     for v, val in results.items(): memory.set_variable(v, val)
     logger.info(f"Restored memory from {frame.get('name')}, kept: {list(results.keys())}")

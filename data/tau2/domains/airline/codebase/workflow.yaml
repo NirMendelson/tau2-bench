@@ -61,6 +61,7 @@
 - id: fetch_date
   action: fetch
   field: date
+  comment: date must be in the format YYYY-MM-DD
 
   # Step 4: Get cabin class
 - id: fetch_cabin
@@ -73,192 +74,16 @@
   field: number_of_passengers
   condition: "{number_of_passengers} <= 5"
   then:
-        # Step 6: Ask about flight preference
-  - id: fetch_flight_preference
+  - id: find_flights_subworkflow
+    action: use_subworkflow
+    subworkflow: FindAvailableFlights
+    set_variables:
+      - possible_flights
+
+  - id: display_flight_options
     action: fetch
-    field: flight_preference
-    comment: it can be direct, one stop or both. if the user only mention direct, then direct, if only mention one stop then one stop, if say it has a preference but both are fine then both. Do Not Infer it from the conversation, you have to get this value explicitly from the user.
-
-  - id: check_flight_preference_type
-    action: conditional
-    condition: '{flight_preference} = both'
-    then:
-    - id: generate_search_combinations_both
-      action: instruction
-      instruction: |
-        Check if origin, destination, or date are lists/arrays.
-        If any of them are lists, generate all possible combinations.
-        If they are single values, create a single combination.
-        
-        For example:
-        - If origin=["JFK", "LAX"], destination="SFO", date="2024-05-15", generate:
-          [{"origin": "JFK", "destination": "SFO", "date": "2024-05-15"}, {"origin": "LAX", "destination": "SFO", "date": "2024-05-15"}]
-        - If all are single values, generate: [{"origin": "{{ origin }}", "destination": "{{ destination }}", "date": "{{ date }}"}]
-        
-        Return the list of combinations as a JSON array.
-      set_variables:
-        - search_combinations_both
-
-    - id: search_direct_flights_loop_both
-      action: loop
-      loop_over: search_combinations_both
-      loop_variable: search_params
-      set_variable: all_direct_flight_results_both
-      subaction:
-        action: use_tool
-        tool_name: search_direct_flight
-        input: ["{{ search_params.origin }}", "{{ search_params.destination }}", "{{ search_params.date }}"]
-        comment: filter out the results where the available seats in the specific 
-          cabin are less than the number of passengers
-    - id: aggregate_direct_flight_results_both
-      action: instruction
-      instruction: |
-        You have all_direct_flight_results_both which is a list of lists (each inner list contains flights from one search).
-        Flatten this into a single list of all flights.
-        Remove duplicates based on flight_number, origin, destination, and date.
-        Filter out flights where available seats in the {{ cabin }} cabin are less than {{ number_of_passengers }}.
-        Return the final aggregated list.
-      set_variables:
-        - search_direct_flight_result_both
-
-    - id: search_onestop_flights_loop_both
-      action: loop
-      loop_over: search_combinations_both
-      loop_variable: search_params
-      set_variable: all_onestop_flight_results_both
-      subaction:
-        action: use_tool
-        tool_name: search_onestop_flight
-        input: ["{{ search_params.origin }}", "{{ search_params.destination }}", "{{ search_params.date }}"]
-        comment: filter out the results where the available seats in the specific 
-          cabin are less than the number of passengers
-    - id: aggregate_onestop_flight_results_both
-      action: instruction
-      instruction: |
-        You have all_onestop_flight_results_both which is a list of lists (each inner list contains flights from one search).
-        Flatten this into a single list of all flights.
-        Remove duplicates based on flight_number, origin, destination, and date.
-        Filter out flights where available seats in the {{ cabin }} cabin are less than {{ number_of_passengers }}.
-        Return the final aggregated list.
-      set_variables:
-        - search_onestop_flight_result_both
-
-    - id: display_both_flight_results
-      action: fetch_with_message
-      field: selected_flights
-      message: |
-        Here are the available flights for your trip:
-
-        DIRECT FLIGHTS:
-        {{ search_direct_flight_result_both }}
-
-        ONE-STOP FLIGHTS:
-        {{ search_onestop_flight_result_both }}
-
-        Please select which flight you'd like to book by providing the flight ID.
-
-    else:
-    - id: check_if_direct
-      action: conditional
-      condition: '{flight_preference} = direct'
-      then:
-      - id: generate_search_combinations
-        action: instruction
-        instruction: |
-          Check if origin, destination, or date are lists/arrays.
-          If any of them are lists, generate all possible combinations.
-          If they are single values, create a single combination.
-          
-          For example:
-          - If origin=["JFK", "LAX"], destination="SFO", date="2024-05-15", generate:
-            [{"origin": "JFK", "destination": "SFO", "date": "2024-05-15"}, {"origin": "LAX", "destination": "SFO", "date": "2024-05-15"}]
-          - If all are single values, generate: [{"origin": "{{ origin }}", "destination": "{{ destination }}", "date": "{{ date }}"}]
-          
-          Return the list of combinations as a JSON array.
-        set_variables:
-          - search_combinations
-
-      - id: search_direct_flights_loop
-        action: loop
-        loop_over: search_combinations
-        loop_variable: search_params
-        set_variable: all_flight_results
-        subaction:
-          action: use_tool
-          tool_name: search_direct_flight
-          input: ["{{ search_params.origin }}", "{{ search_params.destination }}", "{{ search_params.date }}"]
-          comment: filter out the results where the available seats in the specific 
-            cabin are less than the number of passengers
-      - id: aggregate_flight_results
-        action: instruction
-        instruction: |
-          You have all_flight_results which is a list of lists (each inner list contains flights from one search).
-          Flatten this into a single list of all flights.
-          Remove duplicates based on flight_number, origin, destination, and date.
-          Filter out flights where available seats in the {{ cabin }} cabin are less than {{ number_of_passengers }}.
-          Return the final aggregated list.
-        set_variables:
-          - search_direct_flight_result
-
-      - id: display_direct_flight_results
-        action: fetch_with_message
-        field: selected_flights
-        message: |
-          Here are the available direct flights for your trip:
-
-          {{ search_direct_flight_result }}
-
-          Please select which flight you'd like to book by providing the flight ID.
-
-      else:
-      - id: generate_search_combinations_onestop
-        action: instruction
-        instruction: |
-          Check if origin, destination, or date are lists/arrays.
-          If any of them are lists, generate all possible combinations.
-          If they are single values, create a single combination.
-          
-          For example:
-          - If origin=["JFK", "LAX"], destination="SFO", date="2024-05-15", generate:
-            [{"origin": "JFK", "destination": "SFO", "date": "2024-05-15"}, {"origin": "LAX", "destination": "SFO", "date": "2024-05-15"}]
-          - If all are single values, generate: [{"origin": "{{ origin }}", "destination": "{{ destination }}", "date": "{{ date }}"}]
-          
-          Return the list of combinations as a JSON array.
-        set_variables:
-          - search_combinations_onestop
-
-      - id: search_onestop_flights_loop
-        action: loop
-        loop_over: search_combinations_onestop
-        loop_variable: search_params
-        set_variable: all_onestop_flight_results
-        subaction:
-          action: use_tool
-          tool_name: search_onestop_flight
-          input: ["{{ search_params.origin }}", "{{ search_params.destination }}", "{{ search_params.date }}"]
-          comment: filter out the results where the available seats in the specific 
-            cabin are less than the number of passengers
-      - id: aggregate_onestop_flight_results
-        action: instruction
-        instruction: |
-          You have all_onestop_flight_results which is a list of lists (each inner list contains flights from one search).
-          Flatten this into a single list of all flights.
-          Remove duplicates based on flight_number, origin, destination, and date.
-          Filter out flights where available seats in the {{ cabin }} cabin are less than {{ number_of_passengers }}.
-          Return the final aggregated list.
-        set_variables:
-          - search_onestop_flight_result
-
-      - id: display_one_stop_flight_results
-        action: fetch_with_message
-        field: selected_flights
-        message: |
-          Here are the available one-stop flights for your trip:
-
-          {{ search_onestop_flight_result }}
-
-          Please select which flight you'd like to book by providing the flight ID.
-
+    field: selected_flights
+    comment: show the user possible_flights and ask what flights does it want to book. if the user want to filter the possible_flights so filter it only to the flights that match the user's preferences.
 
     # Step 10: Collect passenger information
   - id: ask_about_travel_insurance
@@ -281,16 +106,17 @@
     field: passengers_details (first_name, last_name, date_of_birth)
     condition: '{passengers_details} = complete information for all {number_of_passengers}
       travelers, each with first_name, last_name, and date_of_birth'
-    comment: Date of birth must be a date in the format YYYY-MM-DD, if user ask 
+    comment: |
+      Date of birth must be a date in the format YYYY-MM-DD, if user ask 
       you to take pieces of information from the data, you can use 
-      possible_but_not_confirmed_passengers.
+      possible_but_not_confirmed_passengers. the format should be [first_name: first name, last_name: last name, date_of_birth: date of birth]
 
   - id: ask_preferred_payment_method
     action: fetch_with_message
     field: preferred_payment_method
     message: What is your preferred payment method? You can pay with either 1 
       certificate, 1 credit card, or up to 3 gift cards.
-    comment: valid options are 'certificate', 'credit_card', 'gift_card'
+    comment: valid options are 'certificate', 'credit_card', 'gift_card', if the user mention it want to split between a few, or use a specific certicicate, card, gift_card, include it in the field.
 
   - id: collect_payment_methods
     action: use_tool
@@ -298,7 +124,7 @@
     input: ["{{ user_id }}"]
     comment: get the details of the preferred payment method
     set_variables:
-    - preferred_payment_method_details: result
+    - user_optional_payment_methods: result
 
   - id: fetch_wanted_checked_bags_per_passenger
     action: fetch
@@ -310,6 +136,22 @@
     subworkflow: GivingCheckedBagInformation
     set_variables:
     - allowed_checked_bags_per_passenger
+
+  - id: calculate_nonfree_bags_per_passenger
+    action: conditional
+    condition: "{wanted_checked_bags_per_passenger} <= {allowed_checked_bags_per_passenger}"
+    then:
+    - id: set_nonfree_bags_zero
+      action: set_variable
+      variable: nonfree_bags_per_passenger
+      value: 0
+    else:
+    - id: calculate_nonfree_bags_difference
+      action: use_tool
+      tool_name: calculate
+      input: ["{{ wanted_checked_bags_per_passenger }} - {{ allowed_checked_bags_per_passenger }}"]
+      set_variables:
+      - nonfree_bags_per_passenger
 
   - id: calculate_total_price
     action: instruction
@@ -340,11 +182,19 @@
         }}", "{{ cabin }}", "{{ selected_flights }}", "{{ passengers_details }}",
       "{{ preferred_payment_method_details }}", "{{ total_baggages }}", "{{ nonfree_baggages
         }}", "{{ travel_insurance }}", "{{ total_price }}"]
-    comment: "In payment_methods, the 'amount' field must be the exact portion of
-      the balance to be charged. The sum of all amounts must equal total_price. (Limit:
-      max 1 certificate, 1 credit card, 3 gift cards). in addition, Each reservation
-      can use at most one travel certificate, at most one credit card, and at most
-      three gift cards."
+    comment: |
+      Payment splitting instructions:
+      1. You can split payment across multiple payment methods with these limits:
+         - Maximum 1 travel certificate
+         - Maximum 1 credit card  
+         - Maximum 3 gift cards
+      2. For each payment method in the payment_methods array, set the 'amount' field to the exact dollar amount you want to charge to that specific payment method.
+      3. The sum of all 'amount' values across all payment methods MUST equal the total_price exactly.
+      4. Example: If total_price is $500, you could split it as:
+         - Payment method 1 (credit card): amount = 300
+         - Payment method 2 (gift card): amount = 200
+         Total: 300 + 200 = 500 ✓
+      5. For gift cards and certificates, ensure the amount does not exceed the available balance.
     set_variables:
     - new_reservation_id: reservation_id
 
@@ -2006,3 +1856,132 @@
     asks about their profile using this information. Provide clear and helpful 
     answers about their account details, reservations, payment methods, or any 
     other profile-related information they inquire about.
+
+---
+- subworkflow: FindAvailableFlights
+  return: possible_flights
+- id: fetch_flight_preference
+  action: fetch
+  field: flight_preference
+  comment: it can be direct, one stop or both. if the user only mention direct, then direct, if only mention one stop then one stop, if say it has a preference but both are fine then both. Do Not Infer it from the conversation, you have to get this value explicitly from the user.
+
+- id: evaluate_flights
+  action: conditional
+  condition: '{flight_preference} = both'
+  then:
+  - id: generate_search_combinations
+    action: instruction
+    instruction: |
+      Check if origin, destination, or date {{ date }} are lists/arrays.
+      If any of them are lists, generate all possible combinations.
+      If they are single values, create a single combination.
+      Return the list of combinations as a JSON array.
+      Example: [{"origin": "JFK", "destination": "SFO", "date": "2024-05-15"}]
+    set_variables:
+      - search_combinations
+
+  - id: search_direct_loop
+    action: loop
+    loop_over: search_combinations
+    loop_variable: search_params
+    set_variable: all_direct
+    subaction:
+      action: use_tool
+      tool_name: search_direct_flight
+      input: ["{{ search_params.origin }}", "{{ search_params.destination }}", "{{ search_params.date }}"]
+
+  - id: aggregate_direct
+    action: instruction
+    instruction: |
+      You have all_direct which is a list of lists.
+      Flatten this into a single list of all flights.
+      Remove duplicates and filter out flights where available seats in the {{ cabin }} cabin are less than {{ number_of_passengers }}.
+      Return the final aggregated list.
+    set_variables:
+      - direct_results
+
+  - id: search_onestop_loop
+    action: loop
+    loop_over: search_combinations
+    loop_variable: search_params
+    set_variable: all_onestop
+    subaction:
+      action: use_tool
+      tool_name: search_onestop_flight
+      input: ["{{ search_params.origin }}", "{{ search_params.destination }}", "{{ search_params.date }}"]
+
+  - id: aggregate_onestop
+    action: instruction
+    instruction: |
+      You have all_onestop which is a list of lists.
+      Flatten this into a single list of all flights.
+      Remove duplicates and filter out flights where available seats in the {{ cabin }} cabin are less than {{ number_of_passengers }}.
+      Return the final aggregated list.
+    set_variables:
+      - onestop_results
+
+  - id: finalize_both
+    action: instruction
+    instruction: |
+      Create an object with two sections: "DIRECT FLIGHTS" and "ONE-STOP FLIGHTS".
+      Populate them with direct_results and onestop_results.
+    set_variables:
+      - possible_flights
+
+  else:
+  - id: check_direct
+    action: conditional
+    condition: '{flight_preference} = direct'
+    then:
+    - id: generate_search_combinations_direct
+      action: instruction
+      instruction: |
+        Check if origin, destination, or date {{ date }} are lists/arrays.
+        Generate all possible combinations as a JSON array.
+      set_variables:
+        - search_combinations
+
+    - id: search_direct_loop_only
+      action: loop
+      loop_over: search_combinations
+      loop_variable: search_params
+      set_variable: all_direct_only
+      subaction:
+        action: use_tool
+        tool_name: search_direct_flight
+        input: ["{{ search_params.origin }}", "{{ search_params.destination }}", "{{ search_params.date }}"]
+
+    - id: finalize_direct
+      action: instruction
+      instruction: |
+        Flatten all_direct_only, remove duplicates, and filter by {{ cabin }} seats for {{ number_of_passengers }} passengers.
+        Return the list.
+      set_variables:
+        - possible_flights
+
+    else:
+    - id: generate_search_combinations_onestop
+      action: instruction
+      instruction: |
+        Check if origin, destination, or date {{ date }} are lists/arrays.
+        Generate all possible combinations as a JSON array.
+      set_variables:
+        - search_combinations
+
+    - id: search_onestop_loop_only
+      action: loop
+      loop_over: search_combinations
+      loop_variable: search_params
+      set_variable: all_onestop_only
+      subaction:
+        action: use_tool
+        tool_name: search_onestop_flight
+        input: ["{{ search_params.origin }}", "{{ search_params.destination }}", "{{ search_params.date }}"]
+
+    - id: finalize_onestop
+      action: instruction
+      instruction: |
+        Flatten all_onestop_only, remove duplicates, and filter by {{ cabin }} seats for {{ number_of_passengers }} passengers.
+        Return the list.
+      set_variables:
+        - possible_flights

@@ -17,6 +17,10 @@ def run_workflow_cycle(user_message, memory, workflows, tone_text, llm_model, to
             
         step = frame['steps'][frame['index']]
         if 'id' in step: memory.step_id = step['id']
+        
+        import os
+        if os.getenv("DEBUG_MODE", "false").lower() == "true":
+            print(f"--- Executing Step in {frame.get('name')}: {step.get('id')} ({step.get('action')}) ---")
             
         result = step_executor.execute_step(
             step, memory, memory.get_history(), tone_text, llm_model, tools, workflows, is_root=True

@@ -157,6 +157,9 @@ def execute_subworkflow_recursive(sub_name, memory, conversation, tone_text, llm
     sub_steps = sub_def[1:] if isinstance(sub_def, list) else sub_def.get('steps', [])
     if not sub_steps: return StepExecutionResult("failed", message=f"Subworkflow {sub_name} is empty")
 
+    if DEBUG_MODE:
+        print(f"--- Entering Subworkflow: {sub_name} (returning: {return_vars}) ---")
+
     snapshot = memory.variables.copy() if return_vars else None
     from ..step_executor import execute_step
     for s_step in sub_steps:
@@ -164,12 +167,19 @@ def execute_subworkflow_recursive(sub_name, memory, conversation, tone_text, llm
         if res.status != "completed": return res
             
     if snapshot and return_vars:
-        _restore_with_return_vars(memory, snapshot, return_vars)
+        _restore_with_return_vars(memory, snapshot, return_vars, sub_name)
+    
+    if DEBUG_MODE:
+        print(f"--- Exiting Subworkflow: {sub_name} ---")
     return StepExecutionResult("completed")
 
 # Restores memory to a snapshot while preserving specified return variables
-def _restore_with_return_vars(memory, snapshot, return_vars):
+def _restore_with_return_vars(memory, snapshot, return_vars, name="Subworkflow"):
     if isinstance(return_vars, str): return_vars = [return_vars]
     results_to_keep = {var: memory.get_variable(var) for var in return_vars if memory.get_variable(var) is not None}
+    
+    if DEBUG_MODE:
+        print(f"Restored memory from {name}, kept: {list(results_to_keep.keys())}")
+        
     memory.variables = snapshot
     for var, val in results_to_keep.items(): memory.set_variable(var, val)
