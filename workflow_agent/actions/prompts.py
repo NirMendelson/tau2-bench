@@ -478,13 +478,12 @@ IMPORTANT:
 - Use the memory variables provided above
 - If you need to use tools, reason about what tool calls would be needed, but return the final result value
 - Return ONLY the result value that should be stored in the variable
-- The result should be a simple value (string, number, null, etc.) - not a complex object
+- If the task requires returning a list or a complex object, return it in a valid YAML format.
 - If the task cannot be completed, return null
 
 Respond in YAML format:
 ```yaml
-result: |-
-  <the value to store in the variable, or null if task cannot be completed>
+result: <the value to store in the variable, use |- if it's a multi-line string or contains special characters, otherwise use raw YAML for lists/objects>
 reasoning: |-
   <brief explanation of how you arrived at the result>
 ```"""

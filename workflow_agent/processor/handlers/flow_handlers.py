@@ -4,7 +4,7 @@ import re
 import yaml
 from loguru import logger
 from ...actions import prompts
-from ...utils.json_utils import clean_json_response, is_null_value
+from ...utils.json_utils import clean_json_response, is_null_value, custom_safe_load
 from ...utils.execution_utils import StepExecutionResult
 from ...utils.workflow_utils import get_subworkflow_definition
 
@@ -39,6 +39,9 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools, workfl
     if items is None and isinstance(loop_over_var, str) and "{{" in loop_over_var:
         items = memory.resolve_templates(loop_over_var)
     if not isinstance(items, (list, tuple)): items = []
+    
+    if DEBUG_MODE:
+        print(f"--- Executing Loop: {step.get('id', 'unnamed')} over {len(items)} items ---")
 
     results = []
     original_val = memory.get_variable(loop_variable_name)
@@ -92,14 +95,31 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools,
         memory.get_variables_as_json(), memory.get_history_as_text(), tone_text, step.get('comment')
     )
     
+    if DEBUG_MODE:
+        print(f"--- Instruction Prompt ---\n{prompt}\n--------------------------------")
+        
     response = litellm.completion(model=llm_model, messages=[{"role": "user", "content": prompt}])
     content = clean_json_response(response.choices[0].message.content)
     
+    if DEBUG_MODE:
+        print(f"---agent output---\n{content}\n--------------------------------")
+    
     try:
-        try: result_data = yaml.safe_load(content)
+        try: result_data = custom_safe_load(content)
         except: result_data = _dumb_instruction_parser(content)
         
         val = result_data.get('result')
+        
+        # If val is a string that looks like JSON, try to parse it
+        if isinstance(val, str) and val.strip().startswith(('[', '{')):
+            try:
+                import json
+                parsed_val = json.loads(val.strip())
+                if isinstance(parsed_val, (list, dict)):
+                    val = parsed_val
+            except:
+                pass
+
         if set_variable and not is_null_value(val): memory.set_variable(set_variable, val)
         if set_variables:
             target_keys = set_variables.keys() if isinstance(set_variables, dict) else (

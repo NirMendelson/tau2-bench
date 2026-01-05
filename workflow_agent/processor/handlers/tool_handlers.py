@@ -23,6 +23,9 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
     inputs = step.get('input', [])
     input_list = [memory.resolve_templates(v) if isinstance(v, str) else v for v in (inputs if isinstance(inputs, list) else [inputs])]
 
+    if DEBUG_MODE:
+        print(f"--- Executing Tool: {tool_name} ---\nInputs: {input_list}\n--------------------------------")
+
     if step.get('smart_tool'):
         result, skip_filter = _execute_smart_tool(step, tool_name, memory, tools, llm_model, tone_text, input_list)
         if isinstance(result, StepExecutionResult): return result
@@ -34,6 +37,9 @@ def execute_use_tool(step, memory, tools, llm_model, tone_text):
     if step.get('comment') and not skip_filter:
         result = _apply_tool_output_filter(step, result, memory, llm_model)
         if isinstance(result, StepExecutionResult): return result
+
+    if DEBUG_MODE:
+        print(f"--- Tool Result: {tool_name} ---\n{result}\n--------------------------------")
 
     _store_tool_result(step, tool_name, result, memory)
     return StepExecutionResult("completed")
@@ -51,9 +57,16 @@ def _execute_smart_tool(step, tool_name, memory, tools, llm_model, tone_text, in
         step.get('comment'), input_data=input_list
     )
     
+    if DEBUG_MODE:
+        print(f"--- Smart Tool Prompt: {tool_name} ---\n{prompt}\n--------------------------------")
+    
     try:
         response = litellm.completion(model=llm_model, messages=[{"role": "user", "content": prompt}])
-        data = custom_safe_load(clean_json_response(response.choices[0].message.content))
+        content = response.choices[0].message.content
+        if DEBUG_MODE:
+            print(f"--- Smart Tool Agent Output ---\n{content}\n--------------------------------")
+            
+        data = custom_safe_load(clean_json_response(content))
         logger.info(f"Smart reasoning: {data.get('reasoning')}")
         return tools.execute(tool_name, **data.get('arguments', {})), True
     except Exception as e:
