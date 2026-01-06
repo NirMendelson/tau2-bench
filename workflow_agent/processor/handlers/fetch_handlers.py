@@ -10,8 +10,8 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 # Checks if field(s) exist in conversation. If yes, sets variable(s). If no, asks user.
 def execute_fetch(step, memory, conversation, tone_text, llm_model):
     field = step.get('field')
-    fields = step.get('fields')
-    target_fields = fields if fields else [field]
+    # Normalize field to a list: if it's a string, wrap it in a list; if it's already a list, use it as-is
+    target_fields = [field] if isinstance(field, str) else (field if isinstance(field, list) else [])
     
     missing_fields = [f for f in target_fields if memory.get_variable(f) is None]
     if not missing_fields:
@@ -116,8 +116,8 @@ def execute_fetch_with_condition(step, memory, conversation, tone_text, llm_mode
 # Checks if field(s) exist and asks user with a specific message if not.
 def execute_fetch_with_message(step, memory, conversation, tone_text, llm_model):
     field = step.get('field')
-    fields = step.get('fields')
-    target_fields = fields if fields else [field]
+    # Normalize field to a list: if it's a string, wrap it in a list; if it's already a list, use it as-is
+    target_fields = [field] if isinstance(field, str) else (field if isinstance(field, list) else [])
     
     missing_fields = [f for f in target_fields if memory.get_variable(f) is None]
     if not missing_fields:

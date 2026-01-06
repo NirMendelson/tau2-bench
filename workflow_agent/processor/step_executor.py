@@ -31,7 +31,12 @@ def execute_step(step, memory, conversation, tone_text, llm_model, tools, workfl
         result = flow_handlers.execute_instruction(step, memory, conversation, tone_text, llm_model, tools, workflows)
     elif action == 'loop':
         result = flow_handlers.execute_loop(step, memory, conversation, tone_text, llm_model, tools, workflows)
-    elif action == 'use_subworkflow':
+    elif action == 'use_function':
+        if not is_root:
+            func_name = step.get('function')
+            return flow_handlers.execute_function_recursive(func_name, memory, conversation, tone_text, llm_model, tools, workflows, step=step)
+        return StepExecutionResult("completed")
+    elif action == 'use_subworkflow':  # Backward compatibility
         if not is_root:
             sub_name = step.get('subworkflow')
             return flow_handlers.execute_subworkflow_recursive(sub_name, memory, conversation, tone_text, llm_model, tools, workflows, step=step)

@@ -10,12 +10,13 @@ The agent processes these files in order: first tone (how to communicate), then 
 
 ---
 
-## 1. workflow.yaml - The Complex File
+## 1. workflow.yaml - Main File
 
 This is the main file containing all workflows and business logic. It defines step-by-step processes that the agent follows.
 
 ### General Structure
 - A file contains multiple workflows/subworkflows separated by `---`.
+- there should be one line of space between each step (for easy reading)
 - Each workflow is a **list of objects**.
 - The **first object** in the list defines the workflow metadata:
   - **Main Workflow**: `workflow: Name`.
@@ -38,25 +39,41 @@ Actions define what the agent does at each step. Each action has specific requir
 
 ### 1. `fetch`
 Used to get user information. Will check if it has the information in the conversation and if not will ask for it.
-- `field`: Name of the variable to store (e.g., `user_id`).
-- `fields`: (Alternative) List of variables to store.
-- **Example**:
+- `field`: Name of the variable(s) to store. Can be either:
+  - A single string: `field: user_id` (for one variable)
+  - A list: `field: [user_id, baggage_action]` (for multiple variables)
+- **Examples**:
   ```yaml
+  # Single field
   - id: get_user
     action: fetch
     field: user_id
+  
+  # Multiple fields
+  - id: get_user_and_action
+    action: fetch
+    field: [user_id, baggage_action]
   ```
 
 ### 2. `fetch_with_message`
 Used to get user input and show a SPECIFIC message before getting it. if the message is not specific, fetch with a comment field is a better option.
-- `field`: Variable to store input.
+- `field`: Variable(s) to store input. Can be either:
+  - A single string: `field: wants_insurance` (for one variable)
+  - A list: `field: [origin, destination]` (for multiple variables)
 - `message`: The text to show the user.
-- **Example**:
+- **Examples**:
   ```yaml
+  # Single field
   - id: ask_insurance
     action: fetch_with_message
     field: wants_insurance
     message: "Would you like travel insurance?"
+  
+  # Multiple fields
+  - id: ask_flight_details
+    action: fetch_with_message
+    field: [origin, destination]
+    message: "Please provide your origin and destination airports."
   ```
 
 ### 3. `conditional`
@@ -98,18 +115,34 @@ Combines `fetch` and `conditional`, Fetching and then checking a condition.
 Call a backend tool. 
 - `tool_name`: Name of the tool.
 - `input`: **MUST be an inline list** `["{{ var }}", "{{ vars }}"]`. NEVER use multiline format like `input:\n  - '{{ var }}'`.
-- `set_variables`: (Optional) List of fields to extract from tool output. If not specified, we will set all of the variables the tool returns.
-- **Example**:
+- `set_variable`: (Optional) Field(s) to extract from tool output. Can be:
+  - A single string: `set_variable: variable_name` (extracts `variable_name` from tool result)
+  - A list: `set_variable: [var1, var2]` (extracts multiple fields)
+  - Renaming format: `set_variable: new_name: original_name` (extracts `original_name` and stores as `new_name`)
+  - List with renaming: `set_variable: [new1: orig1, new2: orig2]` (multiple renames)
+- If not specified, the tool result will be stored as `{tool_name}_result`.
+- **Examples**:
   ```yaml
+  # Extract multiple fields with same names
   - id: get_reservation_details
     action: use_tool
     tool_name: get_reservation_details
-    input: ["{{ origin }}", "{{ destination }}", "{{ date }}"]
-    set_variables:
-      - total_baggages
-      - nonfree_baggages
-      - cabin
-      - passengers
+    input: ["{{ reservation_id }}"]
+    set_variable: [total_baggages, nonfree_baggages, cabin, passengers]
+  
+  # Rename a field
+  - id: get_user_reservations
+    action: use_tool
+    tool_name: get_user_details
+    input: ["{{ user_id }}"]
+    set_variable: reservations_list: reservations
+  
+  # Single field
+  - id: get_cabin
+    action: use_tool
+    tool_name: get_reservation_details
+    input: ["{{ reservation_id }}"]
+    set_variable: cabin
   ```
 
 ### 6. `reply`
@@ -146,10 +179,13 @@ Manually set a variable.
 ### 9. `instruction`
 Used when you need the LLM to perform complex logic, calculations, data processing, or other tasks that cannot be easily expressed with other action types. The LLM will execute the instruction and set variables based on the result.
 - `instruction`: Required. Text instructions describing what the LLM should do. Can be multi-line using `|`.
-- `set_variable`: (Optional) Name of a single variable to set from the instruction result.
-- `set_variables`: (Optional) List of variable names to set from the instruction result.
+- `set_variable`: (Optional) Variable(s) to set from the instruction result. Can be:
+  - A single string: `set_variable: variable_name` (stores entire result as `variable_name`)
+  - A list: `set_variable: [var1, var2]` (if result is a dict, extracts these keys)
+  - Renaming format: `set_variable: new_name: original_name` (extracts `original_name` from result dict and stores as `new_name`)
 - **Examples**:
   ```yaml
+  # Single variable (stores entire result)
   - id: calculate_total_price
     action: instruction
     instruction: |
@@ -159,8 +195,13 @@ Used when you need the LLM to perform complex logic, calculations, data processi
       3. multiple the price by number of passengers
 
       Return the total price.
-    set_variables:
-      - total_price
+    set_variable: total_price
+  
+  # Multiple variables (if result is a dict)
+  - id: extract_flight_info
+    action: instruction
+    instruction: Extract flight numbers and dates from the reservation.
+    set_variable: [flight_numbers, flight_dates]
   ```
 
 ### Logic & Template Rules
@@ -170,9 +211,16 @@ Used when you need the LLM to perform complex logic, calculations, data processi
 - **Natural Language**: Conditions can also be natural language strings which the LLM will evaluate (e.g., `"user is a premium member"`).
 
 ### CRITICAL RULES
-- We support both set_variable and set_variables, same with field and fields.
-- If use_tool doesn't have set_variables, it will fetch everything to memory.
-- If use_tool to get information and there is set_variables, make sure you use the SAME names as the names the tool returns.
+- The `field` property can be either a single string or a list of strings. Always use `field` (not `fields`).
+  - Single field: `field: user_id`
+  - Multiple fields: `field: [user_id, baggage_action]`
+- The `set_variable` property can be a string, list, or use renaming format. Always use `set_variable` (not `set_variables`).
+  - Single variable: `set_variable: variable_name`
+  - Multiple variables: `set_variable: [var1, var2, var3]`
+  - Rename single: `set_variable: new_name: original_name` (extracts `original_name` from tool result and stores as `new_name`)
+  - Rename multiple: `set_variable: [new1: orig1, new2: orig2]` (multiple renames)
+- If `use_tool` doesn't have `set_variable`, the entire result will be stored as `{tool_name}_result`.
+- If `use_tool` has `set_variable`, make sure you use the SAME names as the field names the tool returns (unless you're using the renaming format).
 ---
 
 ## 2. constants.yaml - Global Constants and Default Prerequisites
@@ -240,8 +288,7 @@ guidelines:
     action: use_tool
     tool_name: get_payment
     input: ['{{ payment_id }}']
-    set_variables:
-    - payment: payment_id
+    set_variable: payment: payment_id
 
 - `else` blocks are OPTIONAL. If no `else` block is provided, execution continues to the next sequential step. Only add an `else` block if you need different logic than what follows naturally
 

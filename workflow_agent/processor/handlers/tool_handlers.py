@@ -77,7 +77,7 @@ def _execute_smart_tool(step, tool_name, memory, tools, llm_model, tone_text, in
 def _execute_normal_tool(step, tool_name, memory, tools, input_list):
     if tool_name == 'calculate': return _execute_calculate_tool(step, memory, tools)
     
-    reserved = {'id', 'action', 'tool_name', 'set_variables', 'comment', 'then', 'else', 'input', 'smart_tool'}
+    reserved = {'id', 'action', 'tool_name', 'set_variable', 'set_variables', 'comment', 'then', 'else', 'input', 'smart_tool'}
     kwargs = {k: (memory.resolve_templates(v) if isinstance(v, str) else v) for k, v in step.items() if k not in reserved}
     
     try:
@@ -116,20 +116,63 @@ def _apply_tool_output_filter(step, result, memory, llm_model):
         logger.error(f"Post-filter failed: {e}")
         return StepExecutionResult("failed", message=str(e))
 
-# Stores tool results in memory according to set_variables configuration
+# Helper function to parse set_variable format (supports string, list, dict, and "new_name: original_name" format)
+def _parse_set_variable(set_var):
+    """
+    Normalizes set_variable to a list of mappings.
+    Supports:
+    - String: "variable_name" or "new_name: original_name"
+    - List: ["var1", "var2"] or ["new1: orig1", "new2: orig2"] or [{"new1": "orig1"}]
+    - Dict: {"new_name": "original_name"}
+    Returns: List of tuples (new_name, original_name)
+    """
+    if set_var is None:
+        return []
+    
+    # If it's a dict, convert to list of tuples
+    if isinstance(set_var, dict):
+        return [(new_name, old_name) for new_name, old_name in set_var.items()]
+    
+    # If it's a string, check if it has colon (renaming format)
+    if isinstance(set_var, str):
+        if ':' in set_var:
+            parts = set_var.split(':', 1)
+            return [(parts[0].strip(), parts[1].strip())]
+        else:
+            return [(set_var, set_var)]  # Same name for both
+    
+    # If it's a list, process each item
+    if isinstance(set_var, list):
+        mappings = []
+        for item in set_var:
+            if isinstance(item, dict):
+                # Dict format: {"new_name": "original_name"}
+                mappings.extend([(new_name, old_name) for new_name, old_name in item.items()])
+            elif isinstance(item, str):
+                # String format: "variable_name" or "new_name: original_name"
+                if ':' in item:
+                    parts = item.split(':', 1)
+                    mappings.append((parts[0].strip(), parts[1].strip()))
+                else:
+                    mappings.append((item, item))  # Same name for both
+            else:
+                # Fallback: treat as variable name
+                mappings.append((str(item), str(item)))
+        return mappings
+    
+    # Fallback: treat as single variable name
+    return [(str(set_var), str(set_var))]
+
+# Stores tool results in memory according to set_variable configuration
 def _store_tool_result(step, tool_name, result, memory):
-    set_vars = step.get('set_variables', [])
-    if not set_vars:
+    set_var = step.get('set_variable') or step.get('set_variables')  # Support both for backward compatibility
+    if not set_var:
         memory.set_variable(f"{tool_name}_result", result)
         if tool_name == 'calculate': memory.set_variable("calculate_result", result)
         return
 
-    mappings = set_vars if isinstance(set_vars, list) else [set_vars]
-    for m in mappings:
-        if isinstance(m, dict):
-            for new_n, old_n in m.items():
-                val = _get_value_from_result(result, old_n)
-                if val is not None: memory.set_variable(new_n, val)
-        else:
-            val = _get_value_from_result(result, m)
-            if val is not None: memory.set_variable(m, val)
+    mappings = _parse_set_variable(set_var)
+    for new_name, original_name in mappings:
+        val = _get_value_from_result(result, original_name)
+        if val is not None:
+            memory.set_variable(new_name, val)

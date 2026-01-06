@@ -15,7 +15,8 @@ ACTION_BLOCKING_CONFIG = {
     
     # Tool and workflow actions
     "use_tool": False,  
-    "use_subworkflow": False, 
+    "use_function": False,
+    "use_subworkflow": False,  # Backward compatibility 
     "instruction": False,  
     
     # Variable and control actions

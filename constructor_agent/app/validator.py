@@ -5,7 +5,7 @@ import os
 from constructor_agent.app.processor.workflow_processor import WorkflowProcessor
 
 SUPPORTED_ACTIONS = {
-    "fetch": ["field", "fields"],
+    "fetch": ["field"],
     "fetch_with_condition": ["field", "condition"],
     "fetch_with_message": ["field", "message"],
     "reply": ["message"],
@@ -17,7 +17,8 @@ SUPPORTED_ACTIONS = {
     "use_tool": ["tool_name", "input"],
     "instruction": ["instruction"],
     "loop": ["loop_over", "loop_variable"],
-    "use_subworkflow": ["subworkflow"]
+    "use_function": ["function"],
+    "use_subworkflow": ["subworkflow"]  # Backward compatibility
 }
 
 # Enhanced validator to support the Trinity Loop's auto-retry and multi-file checks
@@ -63,14 +64,9 @@ class WorkflowValidator:
 
         # Check required fields for the specific action
         required_fields = SUPPORTED_ACTIONS[action]
-        # For fetch, we need either 'field' or 'fields'
-        if action == "fetch":
-            if "field" not in step and "fields" not in step:
-                errors.append(f"Action 'fetch' requires either 'field' or 'fields'")
-        else:
-            for field in required_fields:
-                if field not in step:
-                    errors.append(f"Action '{action}' is missing required field: '{field}'")
+        for field in required_fields:
+            if field not in step:
+                errors.append(f"Action '{action}' is missing required field: '{field}'")
         
         return errors
 

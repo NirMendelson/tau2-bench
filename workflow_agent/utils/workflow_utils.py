@@ -1,22 +1,30 @@
 from loguru import logger
 
-# Helper to find subworkflow steps by name from the list of workflows
-def get_subworkflow_steps(sub_name, workflows):
+# Helper to find function steps by name from the list of workflows
+def get_function_steps(func_name, workflows):
     for w in workflows:
-        if isinstance(w, list) and len(w) > 0 and w[0].get('subworkflow') == sub_name:
+        if isinstance(w, list) and len(w) > 0 and w[0].get('function') == func_name:
             return w[1:]
-        elif isinstance(w, dict) and w.get('subworkflow') == sub_name:
+        elif isinstance(w, dict) and w.get('function') == func_name:
             return w.get('steps', [])
     return None
 
-# Helper to find the full subworkflow definition (metadata + steps)
-def get_subworkflow_definition(sub_name, workflows):
+# Helper to find the full function definition (metadata + steps)
+def get_function_definition(func_name, workflows):
     for w in workflows:
-        if isinstance(w, list) and len(w) > 0 and w[0].get('subworkflow') == sub_name:
+        if isinstance(w, list) and len(w) > 0 and w[0].get('function') == func_name:
             return w
-        elif isinstance(w, dict) and w.get('subworkflow') == sub_name:
+        elif isinstance(w, dict) and w.get('function') == func_name:
             return w
     return None
+
+# Backward compatibility: Helper to find subworkflow steps by name from the list of workflows
+def get_subworkflow_steps(sub_name, workflows):
+    return get_function_steps(sub_name, workflows)
+
+# Backward compatibility: Helper to find the full subworkflow definition (metadata + steps)
+def get_subworkflow_definition(sub_name, workflows):
+    return get_function_definition(sub_name, workflows)
 
 # Executes the fallback action (transfer to human) when a logic path is missing
 def handle_fallback(memory, tools):
@@ -24,15 +32,15 @@ def handle_fallback(memory, tools):
     from .execution_utils import StepExecutionResult
     return StepExecutionResult("blocking", message=result)
 
-# Filters workflows to extract candidates suitable for matching (excluding subworkflows)
+# Filters workflows to extract candidates suitable for matching (excluding functions)
 def get_match_candidates(workflows):
     candidates = []
     for w in workflows:
-        if isinstance(w, list) and len(w) > 0 and 'subworkflow' not in w[0]:
+        if isinstance(w, list) and len(w) > 0 and 'function' not in w[0] and 'subworkflow' not in w[0]:
             wf_obj = w[0].copy()
             wf_obj['full_wf'] = w
             candidates.append(wf_obj)
-        elif isinstance(w, dict) and 'subworkflow' not in w:
+        elif isinstance(w, dict) and 'function' not in w and 'subworkflow' not in w:
             candidates.append(w)
     return candidates
 

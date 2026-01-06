@@ -6,7 +6,8 @@ from loguru import logger
 from ...actions import prompts
 from ...utils.json_utils import clean_json_response, is_null_value, custom_safe_load
 from ...utils.execution_utils import StepExecutionResult
-from ...utils.workflow_utils import get_subworkflow_definition
+from ...utils.workflow_utils import get_function_definition, get_subworkflow_definition
+from .tool_handlers import _parse_set_variable
 
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
@@ -66,29 +67,30 @@ def execute_loop(step, memory, conversation, tone_text, llm_model, tools, workfl
 def _collect_loop_result(subaction, memory):
     sub_tool_name = subaction.get('tool_name')
     if sub_tool_name:
-        sub_set_vars = subaction.get('set_variables')
-        if sub_set_vars:
+        sub_set_var = subaction.get('set_variable') or subaction.get('set_variables')
+        if sub_set_var:
             item_result = {}
-            target_vars = []
-            if isinstance(sub_set_vars, dict): target_vars = list(sub_set_vars.keys())
-            else:
-                for item in sub_set_vars:
-                    if isinstance(item, dict): target_vars.extend(item.keys())
-                    else: target_vars.append(item)
-            for var_name in target_vars: item_result[var_name] = memory.get_variable(var_name)
-            return item_result
+            mappings = _parse_set_variable(sub_set_var)
+            for new_name, original_name in mappings:
+                val = memory.get_variable(new_name)
+                if val is not None:
+                    item_result[new_name] = val
+            return item_result if item_result else None
         return memory.get_variable(f"{sub_tool_name}_result")
     elif subaction.get('action') == 'set_variable':
         return memory.get_variable(subaction.get('variable'))
     elif subaction.get('action') in ['fetch', 'fetch_with_message']:
-        return memory.get_variable(subaction.get('field'))
+        field = subaction.get('field')
+        if isinstance(field, str):
+            return memory.get_variable(field)
+        elif isinstance(field, list):
+            return {f: memory.get_variable(f) for f in field if memory.get_variable(f) is not None}
     return None
 
 # Executes an instruction action where the LLM performs a complex task using available tools
 def execute_instruction(step, memory, conversation, tone_text, llm_model, tools, workflows):
     instruction_text = memory.resolve_templates(step.get('instruction'))
-    set_variable = step.get('set_variable')
-    set_variables = step.get('set_variables')
+    set_var = step.get('set_variable') or step.get('set_variables')  # Support both for backward compatibility
     
     prompt = prompts.get_instruction_prompt(
         instruction_text, step.get('tools_available', []), 
@@ -120,13 +122,20 @@ def execute_instruction(step, memory, conversation, tone_text, llm_model, tools,
             except:
                 pass
 
-        if set_variable and not is_null_value(val): memory.set_variable(set_variable, val)
-        if set_variables:
-            target_keys = set_variables.keys() if isinstance(set_variables, dict) else (
-                [list(i.keys())[0] if isinstance(i, dict) else i for i in set_variables] if isinstance(set_variables, list) else [set_variables]
-            )
-            for k in target_keys:
-                if not is_null_value(val): memory.set_variable(k, val)
+        # Handle set_variable - for instructions, we typically set the entire result
+        if set_var and not is_null_value(val):
+            mappings = _parse_set_variable(set_var)
+            if mappings:
+                # If multiple mappings, try to extract from result dict
+                if isinstance(val, dict) and len(mappings) > 1:
+                    for new_name, original_name in mappings:
+                        extracted_val = val.get(original_name) if isinstance(val, dict) else val
+                        if not is_null_value(extracted_val):
+                            memory.set_variable(new_name, extracted_val)
+                else:
+                    # Single mapping or non-dict result - set the whole value
+                    new_name, _ = mappings[0]
+                    memory.set_variable(new_name, val)
         return StepExecutionResult("completed")
     except Exception as e:
         logger.error(f"error parsing instruction response: {e}")
@@ -146,35 +155,39 @@ def _dumb_instruction_parser(content):
             result[key] = val
     return result
 
-# Executes a subworkflow recursively, taking a memory snapshot for functional scoping if needed
-def execute_subworkflow_recursive(sub_name, memory, conversation, tone_text, llm_model, tools, workflows, step=None):
-    sub_def = get_subworkflow_definition(sub_name, workflows)
-    if not sub_def: return StepExecutionResult("failed", message=f"Subworkflow {sub_name} not found")
+# Executes a function recursively, taking a memory snapshot for functional scoping if needed
+def execute_function_recursive(func_name, memory, conversation, tone_text, llm_model, tools, workflows, step=None):
+    func_def = get_function_definition(func_name, workflows)
+    if not func_def: return StepExecutionResult("failed", message=f"Function {func_name} not found")
         
-    metadata = sub_def[0] if isinstance(sub_def, list) else sub_def
-    return_vars = metadata.get('return') or (step.get('set_variables') or step.get('set_variable') if step else None)
+    metadata = func_def[0] if isinstance(func_def, list) else func_def
+    return_vars = metadata.get('return') or (step.get('set_variable') or step.get('set_variables') if step else None)
     
-    sub_steps = sub_def[1:] if isinstance(sub_def, list) else sub_def.get('steps', [])
-    if not sub_steps: return StepExecutionResult("failed", message=f"Subworkflow {sub_name} is empty")
+    func_steps = func_def[1:] if isinstance(func_def, list) else func_def.get('steps', [])
+    if not func_steps: return StepExecutionResult("failed", message=f"Function {func_name} is empty")
 
     if DEBUG_MODE:
-        print(f"--- Entering Subworkflow: {sub_name} (returning: {return_vars}) ---")
+        print(f"--- Entering Function: {func_name} (returning: {return_vars}) ---")
 
     snapshot = memory.variables.copy() if return_vars else None
     from ..step_executor import execute_step
-    for s_step in sub_steps:
-        res = execute_step(s_step, memory, conversation, tone_text, llm_model, tools, workflows, is_root=False)
+    for f_step in func_steps:
+        res = execute_step(f_step, memory, conversation, tone_text, llm_model, tools, workflows, is_root=False)
         if res.status != "completed": return res
             
     if snapshot and return_vars:
-        _restore_with_return_vars(memory, snapshot, return_vars, sub_name)
+        _restore_with_return_vars(memory, snapshot, return_vars, func_name)
     
     if DEBUG_MODE:
-        print(f"--- Exiting Subworkflow: {sub_name} ---")
+        print(f"--- Exiting Function: {func_name} ---")
     return StepExecutionResult("completed")
 
+# Backward compatibility: Executes a subworkflow recursively
+def execute_subworkflow_recursive(sub_name, memory, conversation, tone_text, llm_model, tools, workflows, step=None):
+    return execute_function_recursive(sub_name, memory, conversation, tone_text, llm_model, tools, workflows, step)
+
 # Restores memory to a snapshot while preserving specified return variables
-def _restore_with_return_vars(memory, snapshot, return_vars, name="Subworkflow"):
+def _restore_with_return_vars(memory, snapshot, return_vars, name="Function"):
     if isinstance(return_vars, str): return_vars = [return_vars]
     results_to_keep = {var: memory.get_variable(var) for var in return_vars if memory.get_variable(var) is not None}
     

@@ -69,14 +69,29 @@ def _handle_step_result(result, messages, memory, tools):
         messages.append(result.message)
     return None
 
-# Manages branching and subworkflow transitions after a step completes
+# Manages branching and function transitions after a step completes
 def _process_post_step_logic(step, result, memory, workflows, current_frame):
     if hasattr(result, 'result') and result.result and 'condition' in result.result:
         branch_steps = workflow_utils.get_branch_steps(step, result.result['condition'])
         if branch_steps:
             memory.stack.append({"steps": branch_steps, "index": 0, "name": f"{current_frame['name']}_branch"})
             
-    elif step.get('action') == 'use_subworkflow':
+    elif step.get('action') == 'use_function':
+        func_name = step.get('function')
+        func_def = workflow_utils.get_function_definition(func_name, workflows)
+        if func_def:
+            meta = func_def[0] if isinstance(func_def, list) else func_def
+            ret = meta.get('return') or step.get('set_variables') or step.get('set_variable')
+            steps = func_def[1:] if isinstance(func_def, list) else func_def.get('steps', [])
+            
+            frame_data = {"steps": steps, "index": 0, "name": func_name}
+            if ret:
+                frame_data["snapshot"] = memory.variables.copy()
+                frame_data["return_vars"] = ret
+            memory.stack.append(frame_data)
+        else:
+            logger.warning(f"Function {func_name} not found in workflows")
+    elif step.get('action') == 'use_subworkflow':  # Backward compatibility
         sub_name = step.get('subworkflow')
         sub_def = workflow_utils.get_subworkflow_definition(sub_name, workflows)
         if sub_def:

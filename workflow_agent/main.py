@@ -21,7 +21,7 @@ class WorkflowAgent(LLMAgent):
         self.model = self.llm or "gpt-4"
         
         paths = config_utils.get_config_paths()
-        self.workflows = config_utils.load_workflows(paths["workflow"])
+        self.workflows = config_utils.load_workflows_and_functions(paths["workflow"], paths["function"])
         self.tone_text = config_utils.load_tone(paths["tone"])
         self.constants = config_utils.load_constants(paths["constants"])
         self.tool_executor = ToolExecutor(tools)

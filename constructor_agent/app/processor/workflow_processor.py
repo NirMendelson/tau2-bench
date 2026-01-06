@@ -26,7 +26,7 @@ class WorkflowProcessor:
     def get_document_by_name(self, name: str):
         for doc in self.documents:
             metadata = doc[0] if isinstance(doc, list) and len(doc) > 0 else doc
-            if isinstance(metadata, dict) and (metadata.get('workflow') == name or metadata.get('subworkflow') == name):
+            if isinstance(metadata, dict) and (metadata.get('workflow') == name or metadata.get('function') == name or metadata.get('subworkflow') == name):
                 return doc
         return None
 

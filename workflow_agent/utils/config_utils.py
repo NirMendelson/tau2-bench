@@ -16,6 +16,7 @@ def get_config_paths():
     domain_path = os.path.join(os.getcwd(), "data/tau2/domains/airline/codebase")
     return {
         "workflow": os.path.join(domain_path, "workflow.yaml"),
+        "function": os.path.join(domain_path, "function.yaml"),
         "tone": os.path.join(domain_path, "tone.yaml"),
         "constants": os.path.join(domain_path, "constants.yaml")
     }
@@ -24,6 +25,12 @@ def get_config_paths():
 def load_workflows(file_path):
     with open(file_path, 'r') as f:
         return [w for w in yaml.safe_load_all(f) if w is not None]
+
+# Loads functions from function.yaml and merges with workflows
+def load_workflows_and_functions(workflow_path, function_path):
+    workflows = load_workflows(workflow_path) if os.path.exists(workflow_path) else []
+    functions = load_workflows(function_path) if os.path.exists(function_path) else []
+    return workflows + functions
 
 # Loads tone configuration and formats it as a prompt string
 def load_tone(file_path):
