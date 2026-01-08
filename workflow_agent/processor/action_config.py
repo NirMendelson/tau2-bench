@@ -5,8 +5,8 @@ ACTION_BLOCKING_CONFIG = {
     "fetch_with_message": True,
     
     # Reply actions
-    "reply": True, 
-    "reply_exact_message": True, 
+    "reply": False, 
+    "reply_exact_message": False, 
     
     # Conditional actions
     "conditional": False,  

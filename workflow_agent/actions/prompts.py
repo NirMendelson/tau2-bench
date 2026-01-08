@@ -151,8 +151,10 @@ EXAMPLES OF INFERENCE:
 - "I'm not been able to enter the YouTube app, and the rest of my apps work fine." → They have a problem with the YouTube app and its not a WIFI or hardware issue, because the rest work well.
 
 TASK 2: EVALUATE CONDITION
-Evaluate this natural language condition: {condition_str}
+
+Only if you didn't found the field, evaluate this natural language condition: {condition_str}
 Do not give weight to syntax, only to meaning.
+If found is true, return condition_result: null.
 
 IMPORTANT INSTRUCTIONS FOR CONDITION EVALUATION:
 - Use the actual value you extracted for '{field_name}' in TASK 1 when evaluating the condition.
@@ -393,10 +395,9 @@ def get_conditional_with_message_prompt(condition, field_info, conv_text, tone_t
         message_info = "\n- No messages configured for this condition. If condition matches a branch with no message, continue to next step."
     
     return f"""You are an intelligence agent. Evaluate this natural language condition based on the field values and conversation context.
-{comment_section}
-This is part of a conditional_with_message action that will re-evaluate the condition after each user response until the condition result matches a branch with no message configured.{message_info}
-
 Condition to evaluate: {condition_str}
+{comment_section}
+{message_info}
 
 Memory:
 {field_info}

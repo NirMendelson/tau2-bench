@@ -67,7 +67,7 @@ def execute_conditional_with_message(step, memory, conversation, tone_text, llm_
         message = result.get('message')
         
         if message and message.strip() and message.lower() != 'null':
-            return _create_result_with_blocking_check("conditional_with_message", message.strip(), memory, result={"condition": is_true})
+            return _create_result_with_blocking_check("conditional_with_message", message.strip(), memory, result_data={"condition": is_true})
         
         return StepExecutionResult("completed", result={"condition": is_true})
     except Exception as e:

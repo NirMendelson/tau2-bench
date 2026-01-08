@@ -203,9 +203,11 @@
   action: fetch
   field: user_id
   comment: the only correct term is user id.
+
 - id: fetch_reservation_id
   action: fetch_with_condition
   field: reservation_id
+  comment: the reservation_id is a 6 letter code, if there are more than one, format it like ['reservation_id', 'reservation_id', 'reservation_id']
   condition: in conversation history, assistant already asked explicitly for 
     {reservation_id} but user didn't provide it. reservation id is completly 
     different from user id.
@@ -213,6 +215,7 @@
   - id: find_reservation_function
     action: use_function
     function: FindReservationId
+
 - id: get_cabin
   action: use_tool
   tool_name: get_reservation_details
@@ -317,23 +320,13 @@
   - id: inform_one_by_one_reservation
     action: reply
     message: "We will handle the cancellation one by one. and will start with {{ reservations_id[0]
-      }} ok?"
+      }}"
 
   - id: parse_reservation_id
     action: instruction
     instruction: |
       Parse the reservation_id into this format: ['reservation_id', 'reservation_id', 'reservation_id'] and set the variable reservation_id_list to the list.
     set_variable: reservation_id_list
-
-- id: reservation_id_missing
-  action: use_tool
-  tool_name: transfer_to_human_agents
-  input: ["Missing reservation id for flight cancellation"]
-
-- id: escalate_to_human
-  action: use_tool
-  tool_name: transfer_to_human_agents
-  input: ["Reservation ID is missing after attempting to fetch or find."]
 
 - id: loop_over_reservations
   action: loop
@@ -490,20 +483,20 @@
 
 - id: check_if_user_asked_explicitly_for_refund
   action: conditional_with_message
-  condition: "user did not explicitly ask for a refund or compensation"
-  message_on_true: "acknowledge the user's frustration and apologize for the inconvenience.
+  condition: user did not explicitly ask for a refund or compensation
+  message_on_true: acknowledge the user's frustration and apologize for the inconvenience.
     say that you appreciate their feedback and will take it into consideration. DO
-    NOT mention a refund or compensation at this time."
+    NOT mention a refund or compensation at this time.
 
 - id: check_can_cancel_reservation
   action: conditional
-  condition: "{can_cancel} = exists and false"
+  condition: can_cancel exists and is false
   then:
   - id: inform_can_cancel_reservation
     action: reply
-    message: "user is not eligible for cancellation or refund at this time. say to
+    message: user is not eligible for cancellation or refund at this time. say to
       him that your a sorry, but you can't cancel your reservation and can't get a
-      refund at this time."
+      refund at this time.
   else:
 - id: fetch_user_id
   action: fetch
@@ -921,8 +914,8 @@
     details."
 ---
 - workflow: GetUserProfile
-  when: Retrieve and display user profile information including personal 
-    details, contact info, saved payment methods, and reservation history
+  when: Retrieve and display user information including personal 
+    details, contact info, saved payment methods. This workflow can't get reservation id. 
 
 - step_id: get_user_id
   action: fetch
