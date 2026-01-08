@@ -1,17 +1,5 @@
 - workflow: BookFlight
   when: "user wants to book a flight reservation or to find available flights"
-  keywords:
-  - book flight
-  - flight reservation
-  - find flights
-  - available flights
-  - flight booking
-
-  examples:
-  - "I want to book a flight"
-  - "Can you help me find available flights?"
-  - "I need to make a flight reservation"
-  - "Show me flights from New York to London"
 
 - id: check_existing_flight
   action: conditional
@@ -80,7 +68,9 @@
   - id: display_flight_options
     action: fetch
     field: selected_flights
-    comment: show the user possible_flights and ask what flights does it want to book. if the user want to filter the possible_flights so filter it only to the flights that match the user's preferences.
+    comment: show the user possible_flights and ask what flights does it want to
+      book. if the user want to filter the possible_flights so filter it only to
+      the flights that match the user's preferences.
 
     # Step 10: Collect passenger information
   - id: ask_about_travel_insurance
@@ -112,7 +102,9 @@
     field: preferred_payment_method
     message: What is your preferred payment method? You can pay with either 1 
       certificate, 1 credit card, or up to 3 gift cards.
-    comment: valid options are 'certificate', 'credit_card', 'gift_card', if the user mention it want to split between a few, or use a specific certicicate, card, gift_card, include it in the field.
+    comment: valid options are 'certificate', 'credit_card', 'gift_card', if the
+      user mention it want to split between a few, or use a specific 
+      certicicate, card, gift_card, include it in the field.
 
   - id: collect_payment_methods
     action: use_tool
@@ -143,7 +135,8 @@
     - id: calculate_nonfree_bags_difference
       action: use_tool
       tool_name: calculate
-      input: ["{{ wanted_checked_bags_per_passenger }} - {{ allowed_checked_bags_per_passenger }}"]
+      input: ["{{ wanted_checked_bags_per_passenger }} - {{ allowed_checked_bags_per_passenger
+          }}"]
       set_variable: nonfree_bags_per_passenger
 
   - id: calculate_total_price
@@ -203,57 +196,33 @@
   
 ---
 - workflow: ModifyFlightReservation
-  when: "user wants to modify or change the flights in their reservation, it only
-    relevant for flights, not for changing other details in the reservation"
-
-  examples:
-  - "I want to change the flights in my reservation"
-  - "Can I modify the flights in my reservation?"
-  - "I need to update the flights in my reservation"
-  - "How can I change the flights in my reservation?"
-  keywords:
-  - modify flight reservation
-  - change flight reservation
-  - modify flight
-  - change flight
-  - flight modification
-  - flight change
+  when: user wants to modify or change the flights in their reservation, it only
+    relevant for flights, not for changing other details in the reservation
 
 - id: fetch_user_id
   action: fetch
   field: user_id
-  comment: "the only correct term is user id."
-
+  comment: the only correct term is user id.
 - id: fetch_reservation_id
   action: fetch_with_condition
   field: reservation_id
-  condition: "assistant already asked explicitly for {reservation_id} but user didn't
-    provide it. reservation id is completly different from user id."
+  condition: in conversation history, assistant already asked explicitly for 
+    {reservation_id} but user didn't provide it. reservation id is completly 
+    different from user id.
   then:
   - id: find_reservation_function
     action: use_function
     function: FindReservationId
-
-    # Step 2: Get reservation details to get current cabin and flight info
-
+- id: get_cabin
+  action: use_tool
+  tool_name: get_reservation_details
+  input: ['{{ reservation_id }}']
+  set_variable: cabin
 
 ---
 - workflow: ModifyPassengersDetails
   when: "user wants to change passenger details or passenger count in their reservation"
-  examples:
-  - "I want to change the passenger details"
-  - "Can I change the number of passengers?"
-  - "I need to update my passenger details"
-  - "How many passengers are in my reservation?"
-  keywords:
-  - change passenger details
-  - change passenger count
-  - add a passenger
-  - remove a passenger
-  - update name
-  - change name
-  - change dob
-  - update birth date
+
 - id: fetch_change_type
   action: fetch_with_message
   field: passenger_change_type
@@ -326,18 +295,6 @@
 ---
 - workflow: CancelFlight
   when: "user wants to cancel their flight reservation"
-  keywords:
-  - cancel flight
-  - cancel reservation
-  - cancel my flight
-  - cancel booking
-  - flight cancellation
-
-  examples:
-  - "I want to cancel my flight"
-  - "Can you cancel my reservation?"
-  - "I need to cancel my flight booking"
-  - "Cancel my flight reservation"
 
 - id: fetch_user_id
   action: fetch
@@ -530,19 +487,6 @@
 - workflow: Refund
   when: "if the user mention he has a problem with a flight or reservation, and he
     wants a refund or compensation"
-  keywords:
-  - refund
-  - compensation
-  - money back
-
-
-
-  examples:
-  - "I want a refund"
-  - "I want compensation"
-  - "Can I get a refund for my flight?"
-  - "Can you refund my flight?"
-  - "I want my money back"
 
 - id: check_if_user_asked_explicitly_for_refund
   action: conditional_with_message
@@ -788,22 +732,6 @@
   when: "ONLY if the user explicitly asks to be transferred to a human agent / escalate
     to a human / speak with a human representative. If the user just want , you should
     not choose this workflow."
-  keywords:
-  - transfer to human
-  - escalate to human
-  - speak with human
-  - human agent
-  - talk to agent
-  - speak to representative
-  - customer service agent
-  - connect me to human
-
-  examples:
-  - "I want to speak with a human agent"
-  - "Transfer me to a human"
-  - "Can I talk to a real person?"
-  - "I need to escalate this to a human"
-  - "Connect me to customer service"
 
 - id: generate_transfer_summary
   action: instruction
@@ -822,17 +750,6 @@
 - workflow: HandleGenericMessage
   when: "user message is either an opening message or a closing message, its just
     chit chat and we need to reply to it."
-  keywords:
-  - thank you
-  - thank you very much
-  - goodbye
-  - bye
-
-  examples:
-  - "Thank you, have a nice day"
-  - "Ok thanks for the help"
-  - "Hi, how are you?"
-  - "I'm good, thank you"
 
 - id: generate_polite_response
   action: reply
@@ -842,25 +759,6 @@
 ---
 - workflow: GivingCheckedBagInformation
   when: "user asks about checked bag allowance or baggage information"
-  keywords:
-  - checked bag allowance
-  - baggage information
-  - checked bags
-  - baggage
-  - bag allowance
-  - bag information
-  - bag allowance
-
-  examples:
-  - "How many checked bags can I bring?"
-  - "What is the checked bag allowance?"
-  - "Can I bring a checked bag?"
-  - "What is the baggage information?"
-  - "How many bags can I bring?"
-  - "What is the bag allowance?"
-  - "Can I bring a bag?"
-  - "What is the bag information?"
-
 - id: fetch_user_id
   action: fetch
   field: user_id
@@ -988,26 +886,6 @@
 - workflow: ModifyInsurance
   when: "user wants to modify or change insurance after the initial booking. if the
     user already has insurance, you should not choose this workflow."
-  keywords:
-  - modify insurance
-  - change insurance
-  - add insurance
-  - remove insurance
-  - update insurance
-  - insurance modification
-  - insurance change
-  - insurance update
-  - insurance removal
-
-  examples:
-  - "I want to add insurance to my reservation"
-  - "Can I remove insurance from my reservation?"
-  - "I need to modify my insurance"
-  - "I want to change my insurance"
-  - "I want to update my insurance"
-  - "I want to remove my insurance"
-  - "I want to modify my insurance"
-  - "I want to change my insurance"
 
 - id: reply_insurance_change_info
   action: reply
@@ -1018,25 +896,6 @@
 - workflow: checkFlightDetails
   when: "user asks about the details of the flight/reservation- want to know the flight
     number, date, time, origin, destination, insurance, cabin, etc."
-  keywords:
-  - flight details
-  - reservation details
-  - flight number
-  - flight date
-  - flight time
-  - origin
-  - destination
-  - insurance
-  - cabin
-
-  examples:
-  - "What is the flight number?"
-  - "What is the flight date?"
-  - "What is the flight time?"
-  - "What is the origin?"
-  - "What is the destination?"
-  - "What is the insurance?"
-  - "What is the cabin?"
 
 - id: fetch_user_id
   action: fetch
@@ -1065,26 +924,6 @@
   when: Retrieve and display user profile information including personal 
     details, contact info, saved payment methods, and reservation history
 
-  examples:
-  - "I want to know my profile information"
-  - "Can you show me my reservation history?"
-  - "What is my membership level?"
-  - "Show me my saved payment methods"
-  - "I want to know my address"
-  - "What is my email?"
-  - "What is my date of birth?"
-  - "What is my phone number?"
-
-  keywords:
-  - profile information
-  - reservation history
-  - membership level
-  - saved payment methods
-  - address
-  - email
-  - date of birth
-  - phone number
-  
 - step_id: get_user_id
   action: fetch
   field: user_id

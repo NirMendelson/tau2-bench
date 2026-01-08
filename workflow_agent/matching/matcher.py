@@ -56,50 +56,27 @@ def resolve_workflow_conflict(conversation, candidate_workflows, tone_text, llm_
         if wf['workflow'] in text: return wf['workflow'], llm_scores
     return (candidate_workflows[0]['workflow'] if candidate_workflows else None), llm_scores
 
-# Orchestrates full matching: BM25, Semantic search, filtering, and LLM resolution
+# Orchestrates workflow selection: passes all workflows to LLM for decision
 def match_workflow(conversation, workflows, tone_text, llm_model, min_score=0, current_workflow_name=None):
     last_message = next((m['content'] for m in reversed(conversation) if m['role'] == 'user'), None)
     if not last_message: return None
 
-    bm25_scores = bm25.calculate_bm25_scores(last_message, workflows)
-    semantic_scores = semantic.calculate_semantic_scores(last_message, workflows)
-    combined = combine_scores(bm25_scores, semantic_scores)
+    # Pass all workflows directly to LLM for selection (no pre-filtering)
+    if not workflows:
+        return None
+
+    sel_name, llm_scores = resolve_workflow_conflict(conversation, workflows, tone_text, llm_model, current_workflow_name)
     
-    # Log all workflow scores in one line
-    scores_str = ", ".join([f"{wf_name}: {score:.3f}" for wf_name, score in sorted(combined.items(), key=lambda x: x[1], reverse=True)])
-    logger.info(f"semantic+bm25 scores: [{scores_str}]")
+    # Log LLM scores in the same format
+    if llm_scores:
+        llm_scores_str = ", ".join([f"{wf_name}: {score:.3f}" for wf_name, score in sorted(llm_scores.items(), key=lambda x: x[1], reverse=True)])
+        logger.info(f"llm scores: [{llm_scores_str}]")
     
-    passed = filter_workflows(combined, min_score)
-    candidates = []
-
-    if len(passed) == 1:
-        wf_name = list(passed.keys())[0]
-        if wf_name == "HandleGenericMessage":
-            return next((w for w in workflows if w['workflow'] == wf_name), None)
-        candidates = [next((w for w in workflows if w['workflow'] == wf_name))]
-    elif len(passed) > 1:
-        candidates = [w for w in workflows if w['workflow'] in passed]
-    else:
-        top_5 = sorted(combined.items(), key=lambda x: x[1], reverse=True)[:5]
-        candidates = [w for w in workflows if w['workflow'] in [x[0] for x in top_5]]
-
-    generic = next((w for w in workflows if w['workflow'] == "HandleGenericMessage"), None)
-    if generic and not any(c['workflow'] == "HandleGenericMessage" for c in candidates):
-        candidates.append(generic)
-
-    if candidates:
-        sel_name, llm_scores = resolve_workflow_conflict(conversation, candidates, tone_text, llm_model, current_workflow_name)
-        
-        # Log LLM scores in the same format
-        if llm_scores:
-            llm_scores_str = ", ".join([f"{wf_name}: {score:.3f}" for wf_name, score in sorted(llm_scores.items(), key=lambda x: x[1], reverse=True)])
-            logger.info(f"llm scores: [{llm_scores_str}]")
-        
-        res = next((w for w in workflows if w['workflow'] == sel_name), None)
-        if not res: # Fallback to fuzzy match
-            for c in candidates:
-                if c['workflow'] in str(sel_name) or str(sel_name) in c['workflow']: return c
-        if res:
-            logger.info(f"chosen workflow: {res['workflow']}")
-        return res
-    return None
+    res = next((w for w in workflows if w['workflow'] == sel_name), None)
+    if not res: # Fallback to fuzzy match
+        for w in workflows:
+            if w['workflow'] in str(sel_name) or str(sel_name) in w['workflow']: 
+                return w
+    if res:
+        logger.info(f"chosen workflow: {res['workflow']}")
+    return res
